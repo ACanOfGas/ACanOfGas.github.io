@@ -4,8 +4,8 @@
 
 <head>
     <meta charset="utf-8">
-    <meta name="keywords" content="Hello World, ACanOfGas Blog">
-    <meta name="description" content="Welcome to Hexo! This is your very first post. Check documentation for more info. If you get any problems when using Hex">
+    <meta name="keywords" content="DPDK uio/vfio介绍, ACanOfGas Blog">
+    <meta name="description" content="DPDK bifurcated driverDPDK作为用户态网络方案用于实现高性能收发包，大多厂家支持DPDK通过uio&amp;#x2F;vfio，此时内核驱动就无法使用了。device需要绑定到uio&amp;#x2F;vfio驱动，而mellano">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="renderer" content="webkit|ie-stand|ie-comp">
@@ -17,7 +17,7 @@
     <!-- Global site tag (gtag.js) - Google Analytics -->
 
 
-    <title>Hello World | ACanOfGas Blog</title>
+    <title>DPDK uio/vfio介绍 | ACanOfGas Blog</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     
 
@@ -312,12 +312,12 @@
 
 
 
-<div class="bg-cover pd-header post-cover" style="background-image: url('/medias/featureimages/12.jpg')">
+<div class="bg-cover pd-header post-cover" style="background-image: url('/medias/featureimages/15.jpg')">
     <div class="container" style="right: 0px;left: 0px;">
         <div class="row">
             <div class="col s12 m12 l12">
                 <div class="brand">
-                    <h1 class="description center-align post-title">Hello World</h1>
+                    <h1 class="description center-align post-title">DPDK uio/vfio介绍</h1>
                 </div>
             </div>
         </div>
@@ -353,7 +353,7 @@
                 
                 <div class="post-date info-break-policy">
                     <i class="far fa-calendar-minus fa-fw"></i>发布日期:&nbsp;&nbsp;
-                    2023-09-24
+                    2025-05-19
                 </div>
                 
 
@@ -374,19 +374,102 @@
 
         <div class="card-content article-card-content">
             <div id="articleContent">
-                <p>Welcome to <a target="_blank" rel="noopener" href="https://hexo.io/">Hexo</a>! This is your very first post. Check <a target="_blank" rel="noopener" href="https://hexo.io/docs/">documentation</a> for more info. If you get any problems when using Hexo, you can find the answer in <a target="_blank" rel="noopener" href="https://hexo.io/docs/troubleshooting.html">troubleshooting</a> or you can ask me on <a target="_blank" rel="noopener" href="https://github.com/hexojs/hexo/issues">GitHub</a>.</p>
-<h2 id="Quick-Start"><a href="#Quick-Start" class="headerlink" title="Quick Start"></a>Quick Start</h2><h3 id="Create-a-new-post"><a href="#Create-a-new-post" class="headerlink" title="Create a new post"></a>Create a new post</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo new <span class="string">&quot;My New Post&quot;</span></span><br></pre></td></tr></table></figure>
+                <h2 id="DPDK-bifurcated-driver"><a href="#DPDK-bifurcated-driver" class="headerlink" title="DPDK bifurcated driver"></a>DPDK bifurcated driver</h2><p>DPDK作为用户态网络方案用于实现高性能收发包，大多厂家支持DPDK通过uio&#x2F;vfio，此时内核驱动就无法使用了。device需要绑定到uio&#x2F;vfio驱动，而mellanox却实现了用户态驱动、内核态驱动共存的解决方案。该文章主要想论述一下该解决方案的大概实现过程，希望可以给大家一些参考。</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519214954864.png" alt="image-20250519214954864"></p>
+<p>DPDK社区提出了一些优势，主要是可以使用ethtool&#x2F;ifconfig等工具。以及可以通过流表进行分流，将高性能需要处理流量上送用户态，其他ssh、icmp仍然通往内核。</p>
+<p>首先我们思考一个DPDK的内核驱动需要哪些能力。</p>
+<ul>
+<li>寄存器配置，软件操作硬件，比如pcie BAR空间的map，也包括尾指针doorbell的敲门</li>
+<li>dma内存（iova映射关系），硬件dma软件，包括dpdk hugepage&#x2F;legacy memmory，包括DPDK的iova_mode，legacy&#x2F;dynamic内存等；</li>
+<li>中断（不常见）</li>
+</ul>
+<h2 id="UIO驱动"><a href="#UIO驱动" class="headerlink" title="UIO驱动"></a>UIO驱动</h2><p>首先我们先介绍uio驱动。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">static const struct file_operations uio_fops = &#123;</span><br><span class="line">	.owner		= THIS_MODULE,</span><br><span class="line">	.open		= uio_open,</span><br><span class="line">	.release	= uio_release,</span><br><span class="line">	.read		= uio_read,</span><br><span class="line">	.write		= uio_write,</span><br><span class="line">	.mmap		= uio_mmap,</span><br><span class="line">	.poll		= uio_poll,</span><br><span class="line">	.fasync		= uio_fasync,</span><br><span class="line">	.llseek		= noop_llseek,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
 
-<p>More info: <a target="_blank" rel="noopener" href="https://hexo.io/docs/writing.html">Writing</a></p>
-<h3 id="Run-server"><a href="#Run-server" class="headerlink" title="Run server"></a>Run server</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo server</span><br></pre></td></tr></table></figure>
+<p>uio_pci_generic负责PCI设备的probe。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">return devm_uio_register_device(&amp;pdev-&gt;dev, &amp;gdev-&gt;info);</span><br></pre></td></tr></table></figure>
 
-<p>More info: <a target="_blank" rel="noopener" href="https://hexo.io/docs/server.html">Server</a></p>
-<h3 id="Generate-static-files"><a href="#Generate-static-files" class="headerlink" title="Generate static files"></a>Generate static files</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo generate</span><br></pre></td></tr></table></figure>
+<p>uio驱动一定程度上类似一个BUS，UIO驱动提供&#x2F;dev&#x2F;uioX字符设备。</p>
+<p>提供BAR空间的remap以及中断eventfd，remap_pfn_range()实现bar空间的remap。</p>
+<p>uio不具备dma地址转换的能力，所以uio不能在iommu开启且translate时使用。</p>
+<h2 id="VFIO驱动"><a href="#VFIO驱动" class="headerlink" title="VFIO驱动"></a>VFIO驱动</h2><p>vfio驱动也有类似的设计，相较于uio多了dma地址转换的能力。</p>
+<p>vfio-pci启动：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ret = vfio_register_group_dev(&amp;vdev-&gt;vdev);生成/dev/vfio/xxxx, xxxx为vfio-group id</span><br></pre></td></tr></table></figure>
 
-<p>More info: <a target="_blank" rel="noopener" href="https://hexo.io/docs/generating.html">Generating</a></p>
-<h3 id="Deploy-to-remote-sites"><a href="#Deploy-to-remote-sites" class="headerlink" title="Deploy to remote sites"></a>Deploy to remote sites</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo deploy</span><br></pre></td></tr></table></figure>
+<p>vfio驱动主要有下面几个核心概念：</p>
+<p>Vfio container、vfio device、vfio group；</p>
+<p>其中</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">container = open(&quot;/dev/vfio/vfio&quot;, O_RDWR); 对应内核vfio_fops</span><br><span class="line">group = open(&quot;/dev/vfio/26&quot;, O_RDWR); 对应vfio_group_fops;</span><br><span class="line">Device = ioctl(group, VFIO_GROUP_GET_DEVICE_ID, &quot;0000:06:0d.0&quot;)  对应vfio_device_fops</span><br></pre></td></tr></table></figure>
 
-<p>More info: <a target="_blank" rel="noopener" href="https://hexo.io/docs/one-command-deployment.html">Deployment</a></p>
+<p>container不对应真实的硬件概念，group附属于container，一个container下有多个dma remap映射表。</p>
+<p>也就是container是把多个group与多个dma map关联起来，它们公共形成了一个乘法的映射关系。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ioctl(container, VFIO_IOMMU_MAP_DMA, &amp;dma_map);</span><br></pre></td></tr></table></figure>
+
+<p>group包含device，比如pcie协议，根据ACS能力，包含一个或多个devie。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ioctl(group, VFIO_GROUP_SET_CONTAINER, &amp;container)</span><br></pre></td></tr></table></figure>
+
+<p>Device关联到group下的具体device，可以根据devfd mmap映射bar空间，设置中断。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">ioctl(device, VFIO_DEVICE_GET_REGION_INFO, &amp;reg);</span><br><span class="line">ioctl(device, VFIO_DEVICE_GET_IRQ_INFO, &amp;irq);</span><br></pre></td></tr></table></figure>
+
+<p>vfio要求一定要具有dma地址转换能力，所以不能再iommu&#x3D;off时来使用。</p>
+<p>此时可以看出对于bar空间map相对比较简单，主要需要讨论dma相关的页表问题。</p>
+<h2 id="VT-D"><a href="#VT-D" class="headerlink" title="VT-D"></a>VT-D</h2><p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519223212371.png" alt="image-20250519223212371"></p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519223149934.png" alt="image-20250519223149934"></p>
+<p>可以看到在dma映射方面使用类似于进程cpu页表的设计进行iova到pa的映射。</p>
+<p>其中iommu 页表基于bdf，类似于进程页表的pid一样，查找专属于自己的页表。</p>
+<p>而页的PAGE_SIZE也是类似于进程页表一样，PMD&#x2F;PUD&#x2F;PTE等等，实现多级。可支持4k&#x2F;2m&#x2F;1G不同的页大小。</p>
+<h2 id="DPDK内存概念"><a href="#DPDK内存概念" class="headerlink" title="DPDK内存概念"></a>DPDK内存概念</h2><p>DPDK中有多种的内存概念，典型如下</p>
+<ul>
+<li>rte_memseg, 一个真实的物理页面，必然是连续的；</li>
+<li>rte_memseg_list: 多个memseg组织成rte_memseg_list，虚拟地址连续，物理地址不一定连续</li>
+<li>Rte_memzone：连续的物理内存，常用于dma buffer的分配；</li>
+<li>rte_mempool: 内存池，常用于mbuf等的分配。</li>
+</ul>
+<p>DPDK启动时会根据所关联的总线，设备，驱动决定使用的地址模式，iova_mode</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519224023997.png" alt="image-20250519224023997"></p>
+<p>在使用vfio进行地址映射时，如上文所说，在container中，传递pa和iova进行dma地址的映射。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">memset(&amp;dma_map, 0, sizeof(dma_map));</span><br><span class="line">dma_map.argsz = sizeof(struct vfio_iommu_type1_dma_map);</span><br><span class="line">dma_map.vaddr = vaddr;</span><br><span class="line">dma_map.size = len;</span><br><span class="line">dma_map.iova = iova;</span><br><span class="line">dma_map.flags = VFIO_DMA_MAP_FLAG_READ |</span><br><span class="line">		VFIO_DMA_MAP_FLAG_WRITE;</span><br><span class="line"></span><br><span class="line">ret = ioctl(vfio_container_fd, VFIO_IOMMU_MAP_DMA, &amp;dma_map);</span><br></pre></td></tr></table></figure>
+
+<p>此时iova可能等于va，也可能等于pa，取决于dpdk的iova_mode；</p>
+<h2 id="VFIO内核接口分析"><a href="#VFIO内核接口分析" class="headerlink" title="VFIO内核接口分析"></a>VFIO内核接口分析</h2><p>vfio_pin_map_dma: pin住对应的内存，并且获取page，检查页帧号的连续性，从而支持合并页面。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line">while (true) &#123;</span><br><span class="line">	if (pfn != *pfn_base + pinned ||</span><br><span class="line">	    rsvd != is_invalid_reserved_pfn(pfn))</span><br><span class="line">		goto out;</span><br><span class="line"></span><br><span class="line">	/*</span><br><span class="line">	 * Reserved pages aren&#x27;t counted against the user,</span><br><span class="line">	 * externally pinned pages are already counted against</span><br><span class="line">	 * the user.</span><br><span class="line">	 */</span><br><span class="line">	if (!rsvd &amp;&amp; !vfio_find_vpfn(dma, iova)) &#123;</span><br><span class="line">		if (!dma-&gt;lock_cap &amp;&amp;</span><br><span class="line">		    mm-&gt;locked_vm + lock_acct + 1 &gt; limit) &#123;</span><br><span class="line">			pr_warn(&quot;%s: RLIMIT_MEMLOCK (%ld) exceeded\n&quot;,</span><br><span class="line">				__func__, limit &lt;&lt; PAGE_SHIFT);</span><br><span class="line">			ret = -ENOMEM;</span><br><span class="line">			goto unpin_out;</span><br><span class="line">		&#125;</span><br><span class="line">		lock_acct++;</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	pinned++;</span><br><span class="line">	npage--;</span><br><span class="line">	vaddr += PAGE_SIZE;</span><br><span class="line">	iova += PAGE_SIZE;</span><br><span class="line">	batch-&gt;offset++;</span><br><span class="line">	batch-&gt;size--;</span><br><span class="line"></span><br><span class="line">	if (!batch-&gt;size)</span><br><span class="line">		break;</span><br><span class="line"></span><br><span class="line">	pfn = page_to_pfn(batch-&gt;pages[batch-&gt;offset]);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>其中pfn !&#x3D; *pfn_base + pinned用于检测内存页的连续性情况。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">static int vfio_iommu_map(struct vfio_iommu *iommu, dma_addr_t iova,</span><br><span class="line">			  unsigned long pfn, long npage, int prot)</span><br><span class="line">&#123;</span><br><span class="line">	struct vfio_domain *d;</span><br><span class="line">	int ret;</span><br><span class="line"></span><br><span class="line">	list_for_each_entry(d, &amp;iommu-&gt;domain_list, next) &#123;</span><br><span class="line">		ret = iommu_map(d-&gt;domain, iova, (phys_addr_t)pfn &lt;&lt; PAGE_SHIFT,</span><br><span class="line">				npage &lt;&lt; PAGE_SHIFT, prot | IOMMU_CACHE);</span><br><span class="line">		if (ret)</span><br><span class="line">			goto unwind;</span><br><span class="line"></span><br><span class="line">		cond_resched();</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	return 0;</span><br></pre></td></tr></table></figure>
+
+<p>在分配iova，获取pfn页帧号以及连续的物理内存大小后，进行iommu的映射。遍历下面的domain_list，可以理解为iommu_group list。</p>
+<h2 id="Mellanox技术方案"><a href="#Mellanox技术方案" class="headerlink" title="Mellanox技术方案"></a>Mellanox技术方案</h2><p>首先Mellanox基于rdma打通整套方案，不支持绑定uio&#x2F;vfio驱动，首先我们先了解一些rdma的概念。</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519225617083.png" alt="image-20250519225617083"></p>
+<p>PD：Protect domain；</p>
+<p>MR: Memory Region。</p>
+<p>RDMA协议支持主机间基于HVA地址的R&#x2F;W互访，天然存在页表等概念。</p>
+<p>DPDK中创建PF，相关Buffer都attach到该PD中，包括Queue buffer以及memory Pool中。</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519225901087.png" alt="image-20250519225901087"></p>
+<p>Melanox的DPDK框架如图，整理流程基于RDMA verbs实现。</p>
+<p>Queue初始化、DMA映射都基于rdma verbs接口调用create_qp、create_pd、create_mr、modify_qp等实现。</p>
+<p>其基于mem pool粒度进行dma映射。</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519230152569.png" alt="image-20250519230152569"></p>
+<p>Mellanox的dma映射大概调用栈如下</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519230409516.png" alt="image-20250519230409516"></p>
+<p>核心函数：ib_umem_get</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">-&gt;pin_user_pages_fast: 针对va以及size寻找struct pages*[]数组，不连续内存多次调用，后续pin住内存。</span><br><span class="line">  -&gt;lockless_pages_from_mm:</span><br><span class="line">    -&gt;gup_pgd_range 基于current-&gt;mm通过MMU页表找对应的页面。</span><br><span class="line">-&gt;__sg_alloc_table_from_pages 基于struct pages*[]数组分配sg_table</span><br><span class="line">-&gt; umem-&gt;nmap = ib_dma_map_sg_attrs(device, umem-&gt;sg_head.sgl, umem-&gt;sg_nents, DMA_BINIRECTIONAL, dma_attr)执行dma映射</span><br></pre></td></tr></table></figure>
+
+
+<p>Mellanox的硬件介绍：</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519230842288.png" alt="image-20250519230842288"></p>
+<p>可以看出来其支持hva-&gt;dma_address的映射，无论有无IOMMU。如上图的2和3本身物理内存不连续，在应用程序app中连续，</p>
+<p>可以通过该MTT地址转换表将其映射大连续地址。也就是不管DPDK内存如何变化，其rdma都有能力进行映射。</p>
+<p>但复杂的设计需要考虑到页表管理，TLB等方方面面，存在一定技术的高度。</p>
+<p>我们也可以从mlx的发包代码中来验证我们的猜测：</p>
+<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519231142900.png" alt="image-20250519231142900"></p>
+<p>可以看到，不管iommu、dma如何，其总是使用hva地址。</p>
+<h2 id="总结："><a href="#总结：" class="headerlink" title="总结："></a>总结：</h2><p>DPDK所依赖的pcie bar空间映射为很简单的操作系统机制，无太大的实现难度。</p>
+<p>主要难度在于dma映射方面，其中mellanox硬件能力支持用户态进程hva（用户态虚拟地址）到dma_handle（基于pd protect domain）的映射关系（MTRR表项）。</p>
+<p>后续收发包使用hva指定buf地址，Mellanox硬件实现一次转换，hva-&gt;iova(dma handle)，IOMMU根据配置可能进行第二次转换（iova-&gt;hpa）。</p>
+<p>当不使用mellanox方案时，DPDK业务在iommu开启时，也就是使用hva地址作为iova，这个时候dma地址的分配有两个来源，一个是DPDK的分配原则，一个是内核dma_alloc*&#x2F;dma_map*分配，两者可能冲突吗。</p>
+<p>而Mellanox方案只有唯一来源，也就是linux内核dma_alloc&#x2F;dma_map分配。</p>
+<p>另外还有一个内存序和内存一致性的问题一直困扰着我，因为按照dma-api-howto.rst中，区分consistent&#x2F;streaming的内存，对于streaming的内存需要使用dma_sync_map等接口进行同步，但dpdk的hugepage的mbuf收发包内存如何看待这个事情呢。</p>
+<p>请看下一次分析。</p>
 
                 
             </div>
@@ -413,7 +496,7 @@
                     </i>
                 </span>
                 <span class="reprint-info">
-                    <a href="https://acanofgas.github.io/2023/09/24/hello-world/">https://acanofgas.github.io/2023/09/24/hello-world/</a>
+                    <a href="https://acanofgas.github.io/2025/05/19/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/">https://acanofgas.github.io/2025/05/19/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/</a>
                 </span>
             </div>
             <div class="reprint__notice">
@@ -527,17 +610,18 @@
 <article id="prenext-posts" class="prev-next articles">
     <div class="row article-row">
         
-        <div class="article col s12 m6" data-aos="fade-up">
+        <div class="article col s12 m6" data-aos="fade-up" data-aos="fade-up">
             <div class="article-badge left-badge text-color">
-                <i class="fas fa-chevron-left"></i>&nbsp;上一篇</div>
+                <i class="far fa-dot-circle"></i>&nbsp;本篇
+            </div>
             <div class="card">
-                <a href="/2023/09/24/x86-memory-consistency%E5%86%85%E5%AD%98%E4%B8%80%E8%87%B4%E6%80%A7%E4%BB%8B%E7%BB%8D/">
+                <a href="/2025/05/19/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/">
                     <div class="card-image">
                         
                         
-                        <img src="/medias/featureimages/7.jpg" class="responsive-img" alt="x86 memory consistency内存一致性介绍">
+                        <img src="/medias/featureimages/15.jpg" class="responsive-img" alt="DPDK uio/vfio介绍">
                         
-                        <span class="card-title">x86 memory consistency内存一致性介绍</span>
+                        <span class="card-title">DPDK uio/vfio介绍</span>
                     </div>
                 </a>
                 <div class="card-content article-content">
@@ -547,9 +631,9 @@
                         
                     </div>
                     <div class="publish-info">
-                        <span class="publish-date">
-                            <i class="far fa-clock fa-fw icon-date"></i>2023-09-24
-                        </span>
+                            <span class="publish-date">
+                                <i class="far fa-clock fa-fw icon-date"></i>2025-05-19
+                            </span>
                         <span class="publish-author">
                             
                             <i class="fas fa-user fa-fw"></i>
@@ -558,18 +642,7 @@
                         </span>
                     </div>
                 </div>
-                
-                <div class="card-action article-tags">
-                    
-                    <a href="/tags/x86/">
-                        <span class="chip bg-color">x86</span>
-                    </a>
-                    
-                    <a href="/tags/memory-consistency/">
-                        <span class="chip bg-color">memory consistency</span>
-                    </a>
-                    
-                </div>
+
                 
             </div>
         </div>
@@ -577,16 +650,16 @@
         
         <div class="article col s12 m6" data-aos="fade-up">
             <div class="article-badge right-badge text-color">
-                本篇&nbsp;<i class="far fa-dot-circle"></i>
+                下一篇&nbsp;<i class="fas fa-chevron-right"></i>
             </div>
             <div class="card">
-                <a href="/2023/09/24/hello-world/">
+                <a href="/2023/09/24/x86-memory-consistency%E5%86%85%E5%AD%98%E4%B8%80%E8%87%B4%E6%80%A7%E4%BB%8B%E7%BB%8D/">
                     <div class="card-image">
                         
                         
-                        <img src="/medias/featureimages/12.jpg" class="responsive-img" alt="Hello World">
+                        <img src="/medias/featureimages/7.jpg" class="responsive-img" alt="x86 memory consistency内存一致性介绍">
                         
-                        <span class="card-title">Hello World</span>
+                        <span class="card-title">x86 memory consistency内存一致性介绍</span>
                     </div>
                 </a>
                 <div class="card-content article-content">
@@ -607,7 +680,18 @@
                         </span>
                     </div>
                 </div>
-
+                
+                <div class="card-action article-tags">
+                    
+                    <a href="/tags/x86/">
+                        <span class="chip bg-color">x86</span>
+                    </a>
+                    
+                    <a href="/tags/memory-consistency/">
+                        <span class="chip bg-color">memory consistency</span>
+                    </a>
+                    
+                </div>
                 
             </div>
         </div>
