@@ -4,8 +4,11 @@
 
 <head>
     <meta charset="utf-8">
-    <meta name="keywords" content="DPDK uio/vfio介绍, ACanOfGas Blog">
-    <meta name="description" content="DPDK bifurcated driverDPDK作为用户态网络方案用于实现高性能收发包，大多厂家支持DPDK通过uio&amp;#x2F;vfio，此时内核驱动就无法使用了。device需要绑定到uio&amp;#x2F;vfio驱动，而mellano">
+    <meta name="keywords" content="各CPU平台一些杂谈, ACanOfGas Blog">
+    <meta name="description" content="本文主要想介绍一些个人当下对cpu的一些理解，以及记录一些pcie&amp;#x2F;dma性能方面的调试思考。
+CPU架构
+
+这里贴CPU的架构框图还是想表达当前CPU的多发射（Multiple Issue），也就是预取模会一次性预取多条指令，然">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="renderer" content="webkit|ie-stand|ie-comp">
@@ -17,7 +20,7 @@
     <!-- Global site tag (gtag.js) - Google Analytics -->
 
 
-    <title>DPDK uio/vfio介绍 | ACanOfGas Blog</title>
+    <title>各CPU平台一些杂谈 | ACanOfGas Blog</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     
 
@@ -312,12 +315,12 @@
 
 
 
-<div class="bg-cover pd-header post-cover" style="background-image: url('/medias/featureimages/15.jpg')">
+<div class="bg-cover pd-header post-cover" style="background-image: url('/medias/featureimages/14.jpg')">
     <div class="container" style="right: 0px;left: 0px;">
         <div class="row">
             <div class="col s12 m12 l12">
                 <div class="brand">
-                    <h1 class="description center-align post-title">DPDK uio/vfio介绍</h1>
+                    <h1 class="description center-align post-title">各CPU平台一些杂谈</h1>
                 </div>
             </div>
         </div>
@@ -374,102 +377,110 @@
 
         <div class="card-content article-card-content">
             <div id="articleContent">
-                <h2 id="DPDK-bifurcated-driver"><a href="#DPDK-bifurcated-driver" class="headerlink" title="DPDK bifurcated driver"></a>DPDK bifurcated driver</h2><p>DPDK作为用户态网络方案用于实现高性能收发包，大多厂家支持DPDK通过uio&#x2F;vfio，此时内核驱动就无法使用了。device需要绑定到uio&#x2F;vfio驱动，而mellanox却实现了用户态驱动、内核态驱动共存的解决方案。该文章主要想论述一下该解决方案的大概实现过程，希望可以给大家一些参考。</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519214954864.png" alt="image-20250519214954864"></p>
-<p>DPDK社区提出了一些优势，主要是可以使用ethtool&#x2F;ifconfig等工具。以及可以通过流表进行分流，将高性能需要处理流量上送用户态，其他ssh、icmp仍然通往内核。</p>
-<p>首先我们思考一个DPDK的内核驱动需要哪些能力。</p>
-<ul>
-<li>寄存器配置，软件操作硬件，比如pcie BAR空间的map，也包括尾指针doorbell的敲门</li>
-<li>dma内存（iova映射关系），硬件dma软件，包括dpdk hugepage&#x2F;legacy memmory，包括DPDK的iova_mode，legacy&#x2F;dynamic内存等；</li>
-<li>中断（不常见）</li>
-</ul>
-<h2 id="UIO驱动"><a href="#UIO驱动" class="headerlink" title="UIO驱动"></a>UIO驱动</h2><p>首先我们先介绍uio驱动。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">static const struct file_operations uio_fops = &#123;</span><br><span class="line">	.owner		= THIS_MODULE,</span><br><span class="line">	.open		= uio_open,</span><br><span class="line">	.release	= uio_release,</span><br><span class="line">	.read		= uio_read,</span><br><span class="line">	.write		= uio_write,</span><br><span class="line">	.mmap		= uio_mmap,</span><br><span class="line">	.poll		= uio_poll,</span><br><span class="line">	.fasync		= uio_fasync,</span><br><span class="line">	.llseek		= noop_llseek,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+                <p>本文主要想介绍一些个人当下对cpu的一些理解，以及记录一些pcie&#x2F;dma性能方面的调试思考。</p>
+<h2 id="CPU架构"><a href="#CPU架构" class="headerlink" title="CPU架构"></a>CPU架构</h2><p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520000842047.png" alt="image-20250520000842047"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520000927518.png" alt="image-20250520000927518"></p>
+<p>这里贴CPU的架构框图还是想表达当前CPU的多发射（Multiple Issue），也就是预取模会一次性预取多条指令，然后发射到流水线中。</p>
+<p>超标量（Superscalar）指的是CPU内部执行单元EU基于功能进行分类，加法器，乘法器，浮点运算、向量运算等。每种类型的EU也不止一个，此时CPU内部实际上可以并发执行多条指令。但没那么理想的是，指令间存在指令依赖，以及CPU的order序的问题。</p>
+<p>所以还需要增加Reorder Buffer，解决order的问题。当然尽可能的乱序肯定有助于性能。</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520224637730.png" alt="image-20250520224637730"></p>
+<p>又拿出每次都拿的这张图。可以看到coherence和consistency的问题。</p>
+<p>coherence指的是同一块内存被多个观察者observer读写时的问题，比如多个cpu的cache同时具备一块内存的cache，此时多个cpu一起读写的问题。</p>
+<p>而Consistent指的是X、Y等多个地址被不同处理器读写，此时互相之间的看到的顺序问题。</p>
+<p>本篇主要讨论Consistency的问题。</p>
+<p>下面是简单的某些处理器架构的Memory Order总结</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520225440319.png" alt="image-20250520225440319"></p>
+<p>这里面的应该是有专业的论文定义的每种order以及运算。</p>
+<p>Sequential Consistency：绝对一致性 、Relaxed Consistency:、Weak Consistency、Total store order: x86的一致性</p>
+<p>代码示例：</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520225717667.png" alt="image-20250520225717667"></p>
+<p>P0给x地址写1，给y地址写1；</p>
+<p>P1从y读取到r1寄存器中，从x读取到r2寄存器中。</p>
+<p>此时x和y初始值是0，此时不可能存在r1&#x3D;1和r2&#x3D;0。</p>
+<p>因为对于P0 store-store是不被允许的；对于P1 Load-Load是不被允许的。</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520230145245.png" alt="image-20250520230145245"></p>
+<p>P0给x地址写1，读取y内存到r1中；</p>
+<p>P1给y地址写1，读取x内存到r2中。</p>
+<p>此时r1&#x3D;0和r2&#x3D;0是可能的。因为Store-Reload是允许的，也就是读取允许提前到之前的写之前。</p>
+<p>也就是M2可以早于M1执行；M4可以早于M3执行。</p>
+<h2 id="DMA一致性"><a href="#DMA一致性" class="headerlink" title="DMA一致性"></a>DMA一致性</h2><p>又回到我想聊得DMA一致性来看。</p>
+<p>需要解决Cache一致性。</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521000103258.png" alt="image-20250521000103258"></p>
+<p>外设和CPU都是内存的观测者observer。</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520230818058.png" alt="image-20250520230818058"></p>
+<p>个人理解在现代服务器的CPU上，都是由3，也就是硬件来解决cache一致性。</p>
+<p>基于对Intel IOMMU driver的代码理解：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">iommu_dma_alloc:</span><br><span class="line">		int ioprot = dma_info_to_prot(DMA_BIDIRECTIONAL, coherent, attrs);</span><br><span class="line">		*handle = __iommu_dma_map(dev, page_to_phys(page), size, ioprot, dev-coherent_dma_mask)</span><br></pre></td></tr></table></figure>
 
-<p>uio_pci_generic负责PCI设备的probe。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">return devm_uio_register_device(&amp;pdev-&gt;dev, &amp;gdev-&gt;info);</span><br></pre></td></tr></table></figure>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520231441029.png" alt="image-20250520231441029"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520231449886.png" alt="image-20250520231449886"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520231501815.png" alt="image-20250520231501815"></p>
+<p>可以看到根据DMA ioprot映射属性，最后会设置pte的prot字段。</p>
+<p>所以Intel iommu会开启Snoop flag来嗅探实现dma一致性。</p>
+<p>Intel_iommu还提供了debug表项可以查看：</p>
+<p>DMA_TO_DEVICE表示发包</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232135872.png" alt="image-20250520232135872"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232233848.png" alt="image-20250520232233848"></p>
+<p>可以看到PTE表项。</p>
+<p>对于DMA_FROM_DEVICE 收包</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232332388.png" alt="image-20250520232332388"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232402797.png" alt="image-20250520232402797"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232438067.png" alt="image-20250520232438067"></p>
+<p>可以看到PTE表项最后是0x….803，803指的是W&#x2F;R&#x2F;SNP flag为1，表示可写可读、SNP嗅探开启。</p>
+<p>Intel还支持DDIO技术</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232643247.png" alt="image-20250520232643247"></p>
+<p>DDIO指的是DMA可以直接嗅探到cache中，以提升软硬件交互部分DMA性能。而且当前的L3 cache都是数十MB的规格，足以支撑许多比如描述符buffer了。</p>
+<h3 id="AMD平台DMA特性"><a href="#AMD平台DMA特性" class="headerlink" title="AMD平台DMA特性"></a>AMD平台DMA特性</h3><p>至于在AMD平台上，就不具备DDIO能力。</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232957814.png" alt="image-20250520232957814"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232904648.png" alt="image-20250520232904648"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233012575.png" alt="image-20250520233012575"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233041699.png" alt="image-20250520233041699"></p>
+<p>可以看到AMD上由于不具备DDIO能力，所以提出了在AMD上iperf打流时，不使能cache做内存拷贝。</p>
+<p>因为后续发包时，dma读一定和cache产生争抢，导致cache颠簸。所以索性不使用cache了。</p>
+<p>但我个人在一些AMD单板机上做过测试，感觉区别不大。</p>
+<h3 id="x86内存屏障"><a href="#x86内存屏障" class="headerlink" title="x86内存屏障"></a>x86内存屏障</h3><p>可以看到在x86上，io的wmb()和rmb()都是编译器级别的屏障，没有额外的指令。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"></span><br></pre></td></tr></table></figure>
 
-<p>uio驱动一定程度上类似一个BUS，UIO驱动提供&#x2F;dev&#x2F;uioX字符设备。</p>
-<p>提供BAR空间的remap以及中断eventfd，remap_pfn_range()实现bar空间的remap。</p>
-<p>uio不具备dma地址转换的能力，所以uio不能在iommu开启且translate时使用。</p>
-<h2 id="VFIO驱动"><a href="#VFIO驱动" class="headerlink" title="VFIO驱动"></a>VFIO驱动</h2><p>vfio驱动也有类似的设计，相较于uio多了dma地址转换的能力。</p>
-<p>vfio-pci启动：</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ret = vfio_register_group_dev(&amp;vdev-&gt;vdev);生成/dev/vfio/xxxx, xxxx为vfio-group id</span><br></pre></td></tr></table></figure>
+<h3 id="ARM64一致性介绍"><a href="#ARM64一致性介绍" class="headerlink" title="ARM64一致性介绍"></a>ARM64一致性介绍</h3><p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233707145.png" alt="image-20250520233707145"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233732320.png" alt="image-20250520233732320"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233852070.png" alt="image-20250520233852070"></p>
+<p>ARM相对来说会更加复杂，引入了PoC和PoU的概念。</p>
+<p>PoU的视角是一个CPU的视角来观察，只关注自己的cache等；</p>
+<p>而PoC是站在全局的CPU视角，包括GPU、DMA等。另外就是CPU内部IP的称为Inner，而外部的总线上的称为Outter。</p>
+<p>基于DPDK的头文件来看。</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520235133367.png" alt="image-20250520235133367"></p>
+<p>io_w&#x2F;rmb都是outter-shared的，smp的都是inner_shared。</p>
+<p>但是典型鲲鹏、飞腾CPU，内部也是有很多NUMA的，这些NUMA应该不算一个cluster吧，那又怎么算inner和outter呢？</p>
+<p>另外ARM的Cache一致性协议，比如ACE(AXI Coherency Extension)和CHI协议来做一致性保护，也不清楚比如鲲鹏、飞腾对cache一致性协议的相关情况。</p>
+<p>曾经在调试过遇到过的问题；</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520235526519.png" alt="image-20250520235526519"></p>
+<p>之前在收包代码中，先判断了flag，也就是dma描述符已写标记位，然后再取length。此时length值还是原始的mbuf的buffer_len，没有被逻辑回写成最新的pkt_len。但在x86上没发现问题，也正好说明了x86的一致性在io方面仅使用了编译器的屏障。而ARM上需要使用指令集的屏障。</p>
+<p>另外还有常见避免使用内存屏障的方式，比如dependency，就是让数据自己产生依赖，让cpu自己保证这个依赖被cpu正确处理。</p>
+<p>如海思DPDK代码：</p>
+<p>Dpdk:hns3_recv_scattered_pkts：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">rxdp = &amp;rx_ring[rx_id]</span><br><span class="line">bd_base_info = rte_le_to_cpu_32(rxdp-&gt;rx.bd_base_info);</span><br><span class="line">if (unlikely(!(bd_base_info &amp; BIT(HNS3_RXD_VLD_B))))</span><br><span class="line">		break;</span><br><span class="line"></span><br><span class="line">rxd = rxdp[(bd_base_info &amp; (1u &lt;&lt; HNS3_RXD_VLD_B)) - (1u &lt;&lt; HNS3_RXD_VLD_B)];</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<p>vfio驱动主要有下面几个核心概念：</p>
-<p>Vfio container、vfio device、vfio group；</p>
-<p>其中</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">container = open(&quot;/dev/vfio/vfio&quot;, O_RDWR); 对应内核vfio_fops</span><br><span class="line">group = open(&quot;/dev/vfio/26&quot;, O_RDWR); 对应vfio_group_fops;</span><br><span class="line">Device = ioctl(group, VFIO_GROUP_GET_DEVICE_ID, &quot;0000:06:0d.0&quot;)  对应vfio_device_fops</span><br></pre></td></tr></table></figure>
-
-<p>container不对应真实的硬件概念，group附属于container，一个container下有多个dma remap映射表。</p>
-<p>也就是container是把多个group与多个dma map关联起来，它们公共形成了一个乘法的映射关系。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ioctl(container, VFIO_IOMMU_MAP_DMA, &amp;dma_map);</span><br></pre></td></tr></table></figure>
-
-<p>group包含device，比如pcie协议，根据ACS能力，包含一个或多个devie。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ioctl(group, VFIO_GROUP_SET_CONTAINER, &amp;container)</span><br></pre></td></tr></table></figure>
-
-<p>Device关联到group下的具体device，可以根据devfd mmap映射bar空间，设置中断。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">ioctl(device, VFIO_DEVICE_GET_REGION_INFO, &amp;reg);</span><br><span class="line">ioctl(device, VFIO_DEVICE_GET_IRQ_INFO, &amp;irq);</span><br></pre></td></tr></table></figure>
-
-<p>vfio要求一定要具有dma地址转换能力，所以不能再iommu&#x3D;off时来使用。</p>
-<p>此时可以看出对于bar空间map相对比较简单，主要需要讨论dma相关的页表问题。</p>
-<h2 id="VT-D"><a href="#VT-D" class="headerlink" title="VT-D"></a>VT-D</h2><p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519223212371.png" alt="image-20250519223212371"></p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519223149934.png" alt="image-20250519223149934"></p>
-<p>可以看到在dma映射方面使用类似于进程cpu页表的设计进行iova到pa的映射。</p>
-<p>其中iommu 页表基于bdf，类似于进程页表的pid一样，查找专属于自己的页表。</p>
-<p>而页的PAGE_SIZE也是类似于进程页表一样，PMD&#x2F;PUD&#x2F;PTE等等，实现多级。可支持4k&#x2F;2m&#x2F;1G不同的页大小。</p>
-<h2 id="DPDK内存概念"><a href="#DPDK内存概念" class="headerlink" title="DPDK内存概念"></a>DPDK内存概念</h2><p>DPDK中有多种的内存概念，典型如下</p>
-<ul>
-<li>rte_memseg, 一个真实的物理页面，必然是连续的；</li>
-<li>rte_memseg_list: 多个memseg组织成rte_memseg_list，虚拟地址连续，物理地址不一定连续</li>
-<li>Rte_memzone：连续的物理内存，常用于dma buffer的分配；</li>
-<li>rte_mempool: 内存池，常用于mbuf等的分配。</li>
-</ul>
-<p>DPDK启动时会根据所关联的总线，设备，驱动决定使用的地址模式，iova_mode</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519224023997.png" alt="image-20250519224023997"></p>
-<p>在使用vfio进行地址映射时，如上文所说，在container中，传递pa和iova进行dma地址的映射。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">memset(&amp;dma_map, 0, sizeof(dma_map));</span><br><span class="line">dma_map.argsz = sizeof(struct vfio_iommu_type1_dma_map);</span><br><span class="line">dma_map.vaddr = vaddr;</span><br><span class="line">dma_map.size = len;</span><br><span class="line">dma_map.iova = iova;</span><br><span class="line">dma_map.flags = VFIO_DMA_MAP_FLAG_READ |</span><br><span class="line">		VFIO_DMA_MAP_FLAG_WRITE;</span><br><span class="line"></span><br><span class="line">ret = ioctl(vfio_container_fd, VFIO_IOMMU_MAP_DMA, &amp;dma_map);</span><br></pre></td></tr></table></figure>
-
-<p>此时iova可能等于va，也可能等于pa，取决于dpdk的iova_mode；</p>
-<h2 id="VFIO内核接口分析"><a href="#VFIO内核接口分析" class="headerlink" title="VFIO内核接口分析"></a>VFIO内核接口分析</h2><p>vfio_pin_map_dma: pin住对应的内存，并且获取page，检查页帧号的连续性，从而支持合并页面。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line">while (true) &#123;</span><br><span class="line">	if (pfn != *pfn_base + pinned ||</span><br><span class="line">	    rsvd != is_invalid_reserved_pfn(pfn))</span><br><span class="line">		goto out;</span><br><span class="line"></span><br><span class="line">	/*</span><br><span class="line">	 * Reserved pages aren&#x27;t counted against the user,</span><br><span class="line">	 * externally pinned pages are already counted against</span><br><span class="line">	 * the user.</span><br><span class="line">	 */</span><br><span class="line">	if (!rsvd &amp;&amp; !vfio_find_vpfn(dma, iova)) &#123;</span><br><span class="line">		if (!dma-&gt;lock_cap &amp;&amp;</span><br><span class="line">		    mm-&gt;locked_vm + lock_acct + 1 &gt; limit) &#123;</span><br><span class="line">			pr_warn(&quot;%s: RLIMIT_MEMLOCK (%ld) exceeded\n&quot;,</span><br><span class="line">				__func__, limit &lt;&lt; PAGE_SHIFT);</span><br><span class="line">			ret = -ENOMEM;</span><br><span class="line">			goto unpin_out;</span><br><span class="line">		&#125;</span><br><span class="line">		lock_acct++;</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	pinned++;</span><br><span class="line">	npage--;</span><br><span class="line">	vaddr += PAGE_SIZE;</span><br><span class="line">	iova += PAGE_SIZE;</span><br><span class="line">	batch-&gt;offset++;</span><br><span class="line">	batch-&gt;size--;</span><br><span class="line"></span><br><span class="line">	if (!batch-&gt;size)</span><br><span class="line">		break;</span><br><span class="line"></span><br><span class="line">	pfn = page_to_pfn(batch-&gt;pages[batch-&gt;offset]);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>其中pfn !&#x3D; *pfn_base + pinned用于检测内存页的连续性情况。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">static int vfio_iommu_map(struct vfio_iommu *iommu, dma_addr_t iova,</span><br><span class="line">			  unsigned long pfn, long npage, int prot)</span><br><span class="line">&#123;</span><br><span class="line">	struct vfio_domain *d;</span><br><span class="line">	int ret;</span><br><span class="line"></span><br><span class="line">	list_for_each_entry(d, &amp;iommu-&gt;domain_list, next) &#123;</span><br><span class="line">		ret = iommu_map(d-&gt;domain, iova, (phys_addr_t)pfn &lt;&lt; PAGE_SHIFT,</span><br><span class="line">				npage &lt;&lt; PAGE_SHIFT, prot | IOMMU_CACHE);</span><br><span class="line">		if (ret)</span><br><span class="line">			goto unwind;</span><br><span class="line"></span><br><span class="line">		cond_resched();</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	return 0;</span><br></pre></td></tr></table></figure>
-
-<p>在分配iova，获取pfn页帧号以及连续的物理内存大小后，进行iommu的映射。遍历下面的domain_list，可以理解为iommu_group list。</p>
-<h2 id="Mellanox技术方案"><a href="#Mellanox技术方案" class="headerlink" title="Mellanox技术方案"></a>Mellanox技术方案</h2><p>首先Mellanox基于rdma打通整套方案，不支持绑定uio&#x2F;vfio驱动，首先我们先了解一些rdma的概念。</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519225617083.png" alt="image-20250519225617083"></p>
-<p>PD：Protect domain；</p>
-<p>MR: Memory Region。</p>
-<p>RDMA协议支持主机间基于HVA地址的R&#x2F;W互访，天然存在页表等概念。</p>
-<p>DPDK中创建PF，相关Buffer都attach到该PD中，包括Queue buffer以及memory Pool中。</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519225901087.png" alt="image-20250519225901087"></p>
-<p>Melanox的DPDK框架如图，整理流程基于RDMA verbs实现。</p>
-<p>Queue初始化、DMA映射都基于rdma verbs接口调用create_qp、create_pd、create_mr、modify_qp等实现。</p>
-<p>其基于mem pool粒度进行dma映射。</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519230152569.png" alt="image-20250519230152569"></p>
-<p>Mellanox的dma映射大概调用栈如下</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519230409516.png" alt="image-20250519230409516"></p>
-<p>核心函数：ib_umem_get</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">-&gt;pin_user_pages_fast: 针对va以及size寻找struct pages*[]数组，不连续内存多次调用，后续pin住内存。</span><br><span class="line">  -&gt;lockless_pages_from_mm:</span><br><span class="line">    -&gt;gup_pgd_range 基于current-&gt;mm通过MMU页表找对应的页面。</span><br><span class="line">-&gt;__sg_alloc_table_from_pages 基于struct pages*[]数组分配sg_table</span><br><span class="line">-&gt; umem-&gt;nmap = ib_dma_map_sg_attrs(device, umem-&gt;sg_head.sgl, umem-&gt;sg_nents, DMA_BINIRECTIONAL, dma_attr)执行dma映射</span><br></pre></td></tr></table></figure>
-
-
-<p>Mellanox的硬件介绍：</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519230842288.png" alt="image-20250519230842288"></p>
-<p>可以看出来其支持hva-&gt;dma_address的映射，无论有无IOMMU。如上图的2和3本身物理内存不连续，在应用程序app中连续，</p>
-<p>可以通过该MTT地址转换表将其映射大连续地址。也就是不管DPDK内存如何变化，其rdma都有能力进行映射。</p>
-<p>但复杂的设计需要考虑到页表管理，TLB等方方面面，存在一定技术的高度。</p>
-<p>我们也可以从mlx的发包代码中来验证我们的猜测：</p>
-<p><img src="/../images/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/image-20250519231142900.png" alt="image-20250519231142900"></p>
-<p>可以看到，不管iommu、dma如何，其总是使用hva地址。</p>
-<h2 id="总结："><a href="#总结：" class="headerlink" title="总结："></a>总结：</h2><p>DPDK所依赖的pcie bar空间映射为很简单的操作系统机制，无太大的实现难度。</p>
-<p>主要难度在于dma映射方面，其中mellanox硬件能力支持用户态进程hva（用户态虚拟地址）到dma_handle（基于pd protect domain）的映射关系（MTRR表项）。</p>
-<p>后续收发包使用hva指定buf地址，Mellanox硬件实现一次转换，hva-&gt;iova(dma handle)，IOMMU根据配置可能进行第二次转换（iova-&gt;hpa）。</p>
-<p>当不使用mellanox方案时，DPDK业务在iommu开启时，也就是使用hva地址作为iova，这个时候dma地址的分配有两个来源，一个是DPDK的分配原则，一个是内核dma_alloc*&#x2F;dma_map*分配，两者可能冲突吗。</p>
-<p>而Mellanox方案只有唯一来源，也就是linux内核dma_alloc&#x2F;dma_map分配。</p>
-<p>另外还有一个内存序和内存一致性的问题一直困扰着我，因为按照dma-api-howto.rst中，区分consistent&#x2F;streaming的内存，对于streaming的内存需要使用dma_sync_map等接口进行同步，但dpdk的hugepage的mbuf收发包内存如何看待这个事情呢。</p>
-<p>请看下一次分析。</p>
+<p>(bd_base_info &amp; (1u &lt;&lt; HNS3_RXD_VLD_B)) - (1u &lt;&lt; HNS3_RXD_VLD_B) 这个一定是个0，因为上面已经保证了有HNS3_RXD_VLD_B</p>
+<p>这里就是保证了在flag被读取之后再次读取length。</p>
+<h3 id="PCIe-Order"><a href="#PCIe-Order" class="headerlink" title="PCIe Order"></a>PCIe Order</h3><p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001326979.png" alt="image-20250521001326979"></p>
+<p>讲了那么多cpu的order，pcie一样具有order。</p>
+<p>ido表示基于pcie bdf的乱序，一般都可以开。</p>
+<p>rlo要根据业务具体分析，是否有dependency。</p>
+<h3 id="尾指针"><a href="#尾指针" class="headerlink" title="尾指针"></a>尾指针</h3><p>由于实现virtio1.1不支持尾指针，在arm环境上测试，发现收包性能在以太灌入大于cpu能力上限时，发现性能会弱于刚好满足cpu能力上限时的流量。</p>
+<p>根据perf分析了收包瓶颈</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001703280.png" alt="image-20250521001703280"></p>
+<p>可以看到大量cpu cycle用于读取描述符，判断标志位。</p>
+<p>合理推测当芯片性能高于软件时，uvn频繁dma寻求可用描述符，当ring环绕一圈时，芯片dma的位置和软件回收描述符的位置存在冲突。由于没有DDIO，频繁的dma行为会影响软件的性能。</p>
+<p>另外</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001913736.png" alt="image-20250521001913736"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001926694.png" alt="image-20250521001926694"></p>
+<p>对于没有尾指针时，每个包都需要引入一次内存屏障。最后敲门前，又需要引入一次内存屏障。</p>
+<p>在arm上，频繁的dma_wmb()也存在一定的开销。</p>
+<h2 id="伟大目标"><a href="#伟大目标" class="headerlink" title="伟大目标"></a>伟大目标</h2><p>本人目前在一家国产网卡公司。</p>
+<p>总是想着做点高性能的东西。</p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521002108739.png" alt="image-20250521002108739"></p>
+<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521002205272.png" alt="image-20250521002205272"></p>
+<p>看着cx7单核，也就是iperf3和irq在同一个核上时，可以达到这么大还是挺羡慕的。希望有一天我们也可以设计出这样的芯片。</p>
 
                 
             </div>
@@ -496,7 +507,7 @@
                     </i>
                 </span>
                 <span class="reprint-info">
-                    <a href="https://acanofgas.github.io/2025/05/19/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/">https://acanofgas.github.io/2025/05/19/DPDK-uio-vfio%E4%BB%8B%E7%BB%8D/</a>
+                    <a href="https://acanofgas.github.io/2025/05/19/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/">https://acanofgas.github.io/2025/05/19/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/</a>
                 </span>
             </div>
             <div class="reprint__notice">
@@ -614,13 +625,13 @@
             <div class="article-badge left-badge text-color">
                 <i class="fas fa-chevron-left"></i>&nbsp;上一篇</div>
             <div class="card">
-                <a href="/2025/05/19/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/">
+                <a href="/2025/05/19/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/">
                     <div class="card-image">
                         
                         
-                        <img src="/medias/featureimages/11.jpg" class="responsive-img" alt="DPDK bifurcated driver实现方案">
+                        <img src="/medias/featureimages/1.jpg" class="responsive-img" alt="qemu/vdpa 热迁移优化分析">
                         
-                        <span class="card-title">DPDK bifurcated driver实现方案</span>
+                        <span class="card-title">qemu/vdpa 热迁移优化分析</span>
                     </div>
                 </a>
                 <div class="card-content article-content">
@@ -651,13 +662,13 @@
                 下一篇&nbsp;<i class="fas fa-chevron-right"></i>
             </div>
             <div class="card">
-                <a href="/2023/09/24/x86-memory-consistency%E5%86%85%E5%AD%98%E4%B8%80%E8%87%B4%E6%80%A7%E4%BB%8B%E7%BB%8D/">
+                <a href="/2025/05/19/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/">
                     <div class="card-image">
                         
                         
-                        <img src="/medias/featureimages/7.jpg" class="responsive-img" alt="x86 memory consistency内存一致性介绍">
+                        <img src="/medias/featureimages/11.jpg" class="responsive-img" alt="DPDK bifurcated driver实现方案">
                         
-                        <span class="card-title">x86 memory consistency内存一致性介绍</span>
+                        <span class="card-title">DPDK bifurcated driver实现方案</span>
                     </div>
                 </a>
                 <div class="card-content article-content">
@@ -668,7 +679,7 @@
                     </div>
                     <div class="publish-info">
                             <span class="publish-date">
-                                <i class="far fa-clock fa-fw icon-date"></i>2023-09-24
+                                <i class="far fa-clock fa-fw icon-date"></i>2025-05-19
                             </span>
                         <span class="publish-author">
                             
@@ -677,18 +688,6 @@
                             
                         </span>
                     </div>
-                </div>
-                
-                <div class="card-action article-tags">
-                    
-                    <a href="/tags/x86/">
-                        <span class="chip bg-color">x86</span>
-                    </a>
-                    
-                    <a href="/tags/memory-consistency/">
-                        <span class="chip bg-color">memory consistency</span>
-                    </a>
-                    
                 </div>
                 
             </div>

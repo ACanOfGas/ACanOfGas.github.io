@@ -1,0 +1,1167 @@
+<!DOCTYPE HTML>
+<html lang="zh-CN">
+
+
+<head>
+    <meta charset="utf-8">
+    <meta name="keywords" content="qemu/vdpa 热迁移优化分析, ACanOfGas Blog">
+    <meta name="description" content="热迁移中dowmtime包含源虚机停机时间, 目的虚机恢复时间, 流量&amp;#x2F;流表切换时间分类, 三者之和对使用者体现为downtime, 下面主要介绍如下三类, 主要分析前两类downtime时间;
+源虚机停机时间:qemu在迁移时通">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="renderer" content="webkit|ie-stand|ie-comp">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="referrer" content="no-referrer-when-downgrade">
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+
+
+    <title>qemu/vdpa 热迁移优化分析 | ACanOfGas Blog</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    
+
+
+    <!-- bg-cover style     -->
+
+
+
+<link rel="stylesheet" type="text/css" href="/libs/awesome/css/all.min.css">
+<link rel="stylesheet" type="text/css" href="/libs/materialize/materialize.min.css">
+<link rel="stylesheet" type="text/css" href="/libs/aos/aos.css">
+<link rel="stylesheet" type="text/css" href="/libs/animate/animate.min.css">
+<link rel="stylesheet" type="text/css" href="/libs/lightGallery/css/lightgallery.min.css">
+<link rel="stylesheet" type="text/css" href="/css/matery.css">
+<link rel="stylesheet" type="text/css" href="/css/my.css">
+<link rel="stylesheet" type="text/css" href="/css/dark.css" media="none" onload="if(media!='all')media='all'">
+
+
+
+
+    <link rel="stylesheet" href="/libs/tocbot/tocbot.css">
+    <link rel="stylesheet" href="/css/post.css">
+
+
+
+
+    
+        <link rel="stylesheet" type="text/css" href="/css/reward.css">
+    
+
+
+
+    <script src="/libs/jquery/jquery-3.6.0.min.js"></script>
+
+<meta name="generator" content="Hexo 6.3.0"></head>
+
+
+<body>
+    <header class="navbar-fixed">
+    <nav id="headNav" class="bg-color nav-transparent">
+        <div id="navContainer" class="nav-wrapper container">
+            <div class="brand-logo">
+                <a href="/" class="waves-effect waves-light">
+                    
+                    <img src="/medias/logo.png" class="logo-img" alt="LOGO">
+                    
+                    <span class="logo-span">ACanOfGas Blog</span>
+                </a>
+            </div>
+            
+
+<a href="#" data-target="mobile-nav" class="sidenav-trigger button-collapse"><i class="fas fa-bars"></i></a>
+<ul class="right nav-menu">
+  
+  <li class="hide-on-med-and-down nav-item">
+    
+    <a href="/" class="waves-effect waves-light">
+      
+      <i class="fas fa-home" style="zoom: 0.6;"></i>
+      
+      <span>首页</span>
+    </a>
+    
+  </li>
+  
+  <li class="hide-on-med-and-down nav-item">
+    
+    <a href="/tags" class="waves-effect waves-light">
+      
+      <i class="fas fa-tags" style="zoom: 0.6;"></i>
+      
+      <span>标签</span>
+    </a>
+    
+  </li>
+  
+  <li class="hide-on-med-and-down nav-item">
+    
+    <a href="/categories" class="waves-effect waves-light">
+      
+      <i class="fas fa-bookmark" style="zoom: 0.6;"></i>
+      
+      <span>分类</span>
+    </a>
+    
+  </li>
+  
+  <li class="hide-on-med-and-down nav-item">
+    
+    <a href="/archives" class="waves-effect waves-light">
+      
+      <i class="fas fa-archive" style="zoom: 0.6;"></i>
+      
+      <span>归档</span>
+    </a>
+    
+  </li>
+  
+  <li class="hide-on-med-and-down nav-item">
+    
+    <a href="/about" class="waves-effect waves-light">
+      
+      <i class="fas fa-user-circle" style="zoom: 0.6;"></i>
+      
+      <span>关于</span>
+    </a>
+    
+  </li>
+  
+  <li class="hide-on-med-and-down nav-item">
+    
+    <a href="/contact" class="waves-effect waves-light">
+      
+      <i class="fas fa-comments" style="zoom: 0.6;"></i>
+      
+      <span>留言板</span>
+    </a>
+    
+  </li>
+  
+  <li>
+    <a href="#searchModal" class="modal-trigger waves-effect waves-light">
+      <i id="searchIcon" class="fas fa-search" title="搜索" style="zoom: 0.85;"></i>
+    </a>
+  </li>
+  <li>
+    <a href="javascript:;" class="waves-effect waves-light" onclick="switchNightMode()" title="深色/浅色模式" >
+      <i id="sum-moon-icon" class="fas fa-sun" style="zoom: 0.85;"></i>
+    </a>
+  </li>
+</ul>
+
+
+<div id="mobile-nav" class="side-nav sidenav">
+
+    <div class="mobile-head bg-color">
+        
+        <img src="/medias/logo.png" class="logo-img circle responsive-img">
+        
+        <div class="logo-name">ACanOfGas Blog</div>
+        <div class="logo-desc">
+            
+            Never really desperate, only the lost of the soul.
+            
+        </div>
+    </div>
+
+    <ul class="menu-list mobile-menu-list">
+        
+        <li class="m-nav-item">
+	  
+		<a href="/" class="waves-effect waves-light">
+			
+			    <i class="fa-fw fas fa-home"></i>
+			
+			首页
+		</a>
+          
+        </li>
+        
+        <li class="m-nav-item">
+	  
+		<a href="/tags" class="waves-effect waves-light">
+			
+			    <i class="fa-fw fas fa-tags"></i>
+			
+			标签
+		</a>
+          
+        </li>
+        
+        <li class="m-nav-item">
+	  
+		<a href="/categories" class="waves-effect waves-light">
+			
+			    <i class="fa-fw fas fa-bookmark"></i>
+			
+			分类
+		</a>
+          
+        </li>
+        
+        <li class="m-nav-item">
+	  
+		<a href="/archives" class="waves-effect waves-light">
+			
+			    <i class="fa-fw fas fa-archive"></i>
+			
+			归档
+		</a>
+          
+        </li>
+        
+        <li class="m-nav-item">
+	  
+		<a href="/about" class="waves-effect waves-light">
+			
+			    <i class="fa-fw fas fa-user-circle"></i>
+			
+			关于
+		</a>
+          
+        </li>
+        
+        <li class="m-nav-item">
+	  
+		<a href="/contact" class="waves-effect waves-light">
+			
+			    <i class="fa-fw fas fa-comments"></i>
+			
+			留言板
+		</a>
+          
+        </li>
+        
+        
+        <li><div class="divider"></div></li>
+        <li>
+            <a href="https://github.com/blinkfox/hexo-theme-matery" class="waves-effect waves-light" target="_blank">
+                <i class="fab fa-github-square fa-fw"></i>Fork Me
+            </a>
+        </li>
+        
+    </ul>
+</div>
+
+
+        </div>
+
+        
+            <style>
+    .nav-transparent .github-corner {
+        display: none !important;
+    }
+
+    .github-corner {
+        position: absolute;
+        z-index: 10;
+        top: 0;
+        right: 0;
+        border: 0;
+        transform: scale(1.1);
+    }
+
+    .github-corner svg {
+        color: #0f9d58;
+        fill: #fff;
+        height: 64px;
+        width: 64px;
+    }
+
+    .github-corner:hover .octo-arm {
+        animation: a 0.56s ease-in-out;
+    }
+
+    .github-corner .octo-arm {
+        animation: none;
+    }
+
+    @keyframes a {
+        0%,
+        to {
+            transform: rotate(0);
+        }
+        20%,
+        60% {
+            transform: rotate(-25deg);
+        }
+        40%,
+        80% {
+            transform: rotate(10deg);
+        }
+    }
+</style>
+
+<a href="https://github.com/blinkfox/hexo-theme-matery" class="github-corner tooltipped hide-on-med-and-down" target="_blank"
+   data-tooltip="Fork Me" data-position="left" data-delay="50">
+    <svg viewBox="0 0 250 250" aria-hidden="true">
+        <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
+        <path d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
+              fill="currentColor" style="transform-origin: 130px 106px;" class="octo-arm"></path>
+        <path d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.9 141.8,141.8 Z"
+              fill="currentColor" class="octo-body"></path>
+    </svg>
+</a>
+        
+    </nav>
+
+</header>
+
+    
+
+
+
+<div class="bg-cover pd-header post-cover" style="background-image: url('/medias/featureimages/1.jpg')">
+    <div class="container" style="right: 0px;left: 0px;">
+        <div class="row">
+            <div class="col s12 m12 l12">
+                <div class="brand">
+                    <h1 class="description center-align post-title">qemu/vdpa 热迁移优化分析</h1>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<main class="post-container content">
+
+    
+    <div class="row">
+    <div id="main-content" class="col s12 m12 l9">
+        <!-- 文章内容详情 -->
+<div id="artDetail">
+    <div class="card">
+        <div class="card-content article-info">
+            <div class="row tag-cate">
+                <div class="col s7">
+                    
+                          <div class="article-tag">
+                            <span class="chip bg-color">无标签</span>
+                          </div>
+                    
+                </div>
+                <div class="col s5 right-align">
+                    
+                </div>
+            </div>
+
+            <div class="post-info">
+                
+                <div class="post-date info-break-policy">
+                    <i class="far fa-calendar-minus fa-fw"></i>发布日期:&nbsp;&nbsp;
+                    2025-05-19
+                </div>
+                
+
+                
+
+                
+
+                
+
+                
+            </div>
+        </div>
+        <hr class="clearfix">
+
+        
+
+        
+
+        <div class="card-content article-card-content">
+            <div id="articleContent">
+                <p>热迁移中dowmtime包含源虚机停机时间, 目的虚机恢复时间, 流量&#x2F;流表切换时间分类, 三者之和对使用者体现为downtime, 下面主要介绍如下三类, 主要分析前两类downtime时间;</p>
+<h2 id="源虚机停机时间"><a href="#源虚机停机时间" class="headerlink" title="源虚机停机时间:"></a>源虚机停机时间:</h2><p>qemu在迁移时通过migration线程负责脏页拷贝工作, 当脏页下降到一定阈值后执行停虚机以及最后的拷贝工作. 即如下相关代码.</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">qemu migration/migration.c </span><br><span class="line">migration_iteration_run:     </span><br><span class="line">			if (pending_size &amp;&amp; pending_size &gt;= s-&gt;threshold_size) &#123;        </span><br><span class="line">				/* Still a significant amount to transfer */        </span><br><span class="line">				if (!in_postcopy &amp;&amp; pend_pre &lt;= s-&gt;threshold_size &amp;&amp; </span><br><span class="line">						qatomic_read(&amp;s-&gt;start_postcopy)) &#123;</span><br><span class="line">						if (postcopy_start(s)) &#123;</span><br><span class="line">								error_report(&quot;%s: postcopy failed to start&quot;, __func__);</span><br><span class="line">						&#125;</span><br><span class="line">						return MIG_ITERATE_SKIP;    </span><br><span class="line">				&#125;</span><br><span class="line">				/* Just another iteration step */</span><br><span class="line">				qemu_savevm_state_iterate(s-&gt;to_dst_file, in_postcopy);</span><br><span class="line">			&#125; else &#123;        </span><br><span class="line">					trace_migration_thread_low_pending(pending_size);</span><br><span class="line">					migration_completion(s);</span><br><span class="line">					return MIG_ITERATE_BREAK;     </span><br><span class="line">			&#125;</span><br></pre></td></tr></table></figure>
+
+<p>而所谓的阈值如何计算:</p>
+<p>qemu存在迁移配置migrate_parameters中存在downtime-limit, 默认为300ms, 可通过qmp migrate_set_parameter或virsh migrate-setmaxdowntime –downtime 50 –domain vm0  来改变该配置.</p>
+<p>qemu会监测之前的迁移带宽, 拿计算得到的迁移带宽*downtime-limit即为剩余的迁移阈值.</p>
+<p>到达迁移阈值后, 执行migration_completion 开始做收尾工作.</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line">qemu migration/migration.c </span><br><span class="line">migration_completion:        </span><br><span class="line">		qemu_mutex_lock_iothread();</span><br><span class="line">		s-&gt;downtime_start = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);</span><br><span class="line">    qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER, NULL);</span><br><span class="line">    s-&gt;vm_was_running = runstate_is_running();</span><br><span class="line">    ret = global_state_store();</span><br><span class="line">    if (!ret) &#123;</span><br><span class="line">    		bool inactivate = !migrate_colo_enabled();</span><br><span class="line">    		ret = vm_stop_force_state(RUN_STATE_FINISH_MIGRATE);            			</span><br><span class="line">    		trace_migration_completion_vm_stop(ret);            </span><br><span class="line">    		if (ret &gt;= 0) &#123;                </span><br><span class="line">    			ret = migration_maybe_pause(s, &amp;current_active_state,                                              																			MIGRATION_STATUS_DEVICE);            </span><br><span class="line">    			&#125;            </span><br><span class="line">    			if (ret &gt;= 0) &#123;                </span><br><span class="line">    					qemu_file_set_rate_limit(s-&gt;to_dst_file, INT64_MAX);                </span><br><span class="line">    					gettimeofday(&amp;t2, NULL);                </span><br><span class="line">    					ret = qemu_savevm_state_complete_precopy(s-&gt;to_dst_file, false,                                                         </span><br><span class="line">    																										inactivate);                </span><br><span class="line">    					gettimeofday(&amp;t3, NULL);            </span><br><span class="line">    			&#125;            </span><br><span class="line">    			if (inactivate &amp;&amp; ret &gt;= 0) &#123;                </span><br><span class="line">    						s-&gt;block_inactive = true;            </span><br><span class="line">    			&#125;        </span><br><span class="line">    &#125;        </span><br><span class="line">    qemu_mutex_unlock_iothread();</span><br></pre></td></tr></table></figure>
+
+<p>可以看到migration_completion中会标记(downtime_start) , 停止虚机(vm_stop_force_state), 完成最后数据的迁移(qemu_savevm_state_complete_precopy)</p>
+<p>即使qemu自身会统计downtime, 统计方式其实就是在migration_completion启动时标记downtime_start, migration线程迁移停止时标记end. 两者之差就是downtime</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">qemu migration/migration.c </span><br><span class="line"></span><br><span class="line">migration_iteration_finish: </span><br><span class="line">    migration_calculate_complete     </span><br><span class="line">        </span><br><span class="line">        s-&gt;total_time = end_time - s-&gt;start_time;    </span><br><span class="line">        if (!s-&gt;downtime) &#123;        </span><br><span class="line">        /*         </span><br><span class="line">        * It&#x27;s still not set, so we are precopy migration.  For         </span><br><span class="line">        * postcopy, downtime is calculated during postcopy_start().         </span><br><span class="line">        */        </span><br><span class="line">        s-&gt;downtime = end_time - s-&gt;downtime_start;    </span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<p>但是这样得到的downtime和最初的downtime_limit肯定是有着巨大的差距的.</p>
+<p>因为vm_stop_force_state流程, 即虚机停止流程对于各类外设有着大量的stop, free流程. 涉及到进程间通信(dpdk vhost-user), 内核释放资源等, 该所占时间远多于downtime-limit.</p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620684940-6e9afd18-d4e1-4a44-a793-a92035df00ba.png" alt="img"></p>
+<p>故导致了downtime时间较长且不好预估的现象.</p>
+<p>该类耗时的释放不影响迁移状态的获取, 故将该类耗时释放流程调整到迁移后, 从而不降低downtime为一个最简单的方案.</p>
+<p>那么调整到哪里合适呢, 就要找到啥时候目的虚机可以正常启动.</p>
+<p>整个虚机的迁移流程是分section的, 可以理解整个vm的状态都被划分到各个section中.比如内存, cpu, 每个vdpa device都拥有自己的section_id</p>
+<p>对于内存类section需多次迁移, (start&#x2F;end等), 对于设备状态类section一次迁移就可以完成.</p>
+<p>seciton到达目的虚机时, 目的虚机的incoming线程对该类section进行恢复.</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br></pre></td><td class="code"><pre><span class="line">qemu: migration/savevm.c </span><br><span class="line"></span><br><span class="line">qemu_loadvm_state_main:        </span><br><span class="line">		switch (section_type) &#123;        </span><br><span class="line">		case QEMU_VM_SECTION_START:        </span><br><span class="line">		case QEMU_VM_SECTION_FULL:            </span><br><span class="line">				gettimeofday(&amp;t1, NULL);            </span><br><span class="line">				ret = qemu_loadvm_section_start_full(f, mis);            </span><br><span class="line">				if (ret &lt; 0) &#123;                </span><br><span class="line">						goto out;            </span><br><span class="line">				&#125;            </span><br><span class="line">				break;        </span><br><span class="line">				case QEMU_VM_SECTION_PART:        </span><br><span class="line">				case QEMU_VM_SECTION_END:            </span><br><span class="line">							ret = qemu_loadvm_section_part_end(f, mis);            </span><br><span class="line">							if (ret &lt; 0) &#123;                </span><br><span class="line">									goto out;            </span><br><span class="line">							&#125;            </span><br><span class="line">							break;        </span><br><span class="line">						case QEMU_VM_COMMAND:            </span><br><span class="line">							ret = loadvm_process_command(f);            </span><br><span class="line">							trace_qemu_loadvm_state_section_command(ret);            </span><br><span class="line">							if ((ret &lt; 0) || (ret == LOADVM_QUIT)) &#123;                </span><br><span class="line">									goto out;            </span><br><span class="line">							&#125;            </span><br><span class="line">							break;        </span><br><span class="line">						case QEMU_VM_EOF:            </span><br><span class="line">								/* This is the end of migration */           </span><br><span class="line">                gettimeofday(&amp;t1, NULL);            </span><br><span class="line">                goto out;</span><br></pre></td></tr></table></figure>
+
+<p>QEMU_VM_SECTION_START&#x2F;QEMU_VM_SECTION_PART&#x2F;QEMU_VM_SECTION_END应该是内存section的多次拷贝;</p>
+<p>QEMU_VM_SECTION_FULL就是设备类一次可以迁移完成的section迁移.</p>
+<p>QEMU_VM_EOF 即状态全部迁移完成.</p>
+<p>那么QEMU_VM_EOF  何时发送完成:</p>
+<p>即在qemu_savevm_state_complete_precopy在这最后一哆嗦的数据发送完成即认为迁移完成.</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">qemu </span><br><span class="line">migration/savevm.c </span><br><span class="line">qemu_savevm_state_complete_precopy     </span><br><span class="line"></span><br><span class="line">		if (!in_postcopy || iterable_only) &#123;        </span><br><span class="line">				ret = qemu_savevm_state_complete_precopy_iterable(f, in_postcopy);        </span><br><span class="line">				if (ret) &#123;            </span><br><span class="line">						return ret;       </span><br><span class="line">        &#125;    </span><br><span class="line">    &#125;     </span><br><span class="line">    ret = qemu_savevm_state_complete_precopy_non_iterable(f, in_postcopy,                                                          </span><br><span class="line">    																											inactivate_disks);    </span><br><span class="line">    if (ret) &#123;        </span><br><span class="line">    		return ret;    </span><br><span class="line">    &#125; </span><br><span class="line">flush:    </span><br><span class="line">		qemu_fflush(f);</span><br></pre></td></tr></table></figure>
+
+<p>该分为iterable和non_iterable, 即迭代的发送各个设备状态和非迭代的完成收尾.</p>
+<p>在qemu_savevm_state_complete_precopy_non_iterable中会发出QEMU_VM_EOF.</p>
+<p>即在上述代码的qemu_fflush之后, 目的虚机就可以执行了.</p>
+<p>那么问题就是把耗时操作移动到qemu_fflush之后就可以实现downtime的减少.</p>
+<p>目前识别的到耗时操作有如下几类:</p>
+<ul>
+<li>set_guest_notifiers, 即kvm中中断控制器pic关于irqfd的释放；</li>
+<li>vhost_user_get_vring_base中释放notifer，应该是notify直通相关的释放吧， 主要vring太多</li>
+<li>vhost_dev_disable_notifiers 尚未分析， 6.1中存在，8.1存在优化，时延不明显。</li>
+</ul>
+<p>故将上述耗时移动到qemu_savevm_state_complete_precopy 之后即可在非libvirt迁移中带来downtime时延降低的提升。</p>
+<p>另外 qemu_savevm_state_complete_precopy的时延应该会受downtime-limit配置影响.</p>
+<p>下面分析libvirt情况下的变化：</p>
+<p>libvirt默认启动qemu通过-S参数进行启动。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">src/qemu/qemu_command.c qemuBuildCommandLine:     </span><br><span class="line"></span><br><span class="line">if (!standalone)        </span><br><span class="line">		virCommandAddArg(cmd, &quot;-S&quot;); /* freeze CPU */</span><br></pre></td></tr></table></figure>
+
+<p>此时qemu不去autostart;</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">qemu softmmu/vl.c </span><br><span class="line">qemu_init: </span><br><span class="line">		case QEMU_OPTION_S: </span><br><span class="line">			autostart = 0; </span><br><span class="line">			break;</span><br></pre></td></tr></table></figure>
+
+<p>顺便提一嘴qemu的迁移恢复流程:</p>
+<p>首先在incoming线程中根据收到的section恢复状态, 此时会依次调用vhost-use set_vring_enable; 如下文调用栈.</p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620739070-31fbe820-4097-4382-9690-65b775d5185d.png" alt="img"></p>
+<p>等到收到QEMU_VM_EOF 后, 在incoming结束时, 会通过qemu下半部切换到qemu 主线程开始启动虚机;</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">migration/migration.c </span><br><span class="line"></span><br><span class="line">process_incoming_migration_co:     </span><br><span class="line">		mis-&gt;bh = qemu_bh_new(process_incoming_migration_bh, mis);</span><br></pre></td></tr></table></figure>
+
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620761403-df8110ce-c5ca-4a7c-9e40-9cfd70836840.png" alt="img"></p>
+<p>核心函数为vm_start, 其在vm_prepare_start会进行vDPA device的配置, 即走到vdpa driver的dev_config流程.</p>
+<p>所以通流需要在所有设备的config之后. 不涉及使用多个设备的之间的哪一个设备谁快谁慢的问题.</p>
+<p>而由于qemu -S启动所以不会autostart, 会等待qmp的cont指令;</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">migration/migration.c </span><br><span class="line">process_incoming_migration_bh:         </span><br><span class="line">				if (autostart) &#123;            </span><br><span class="line">						vm_start();        </span><br><span class="line">				&#125; else &#123;            </span><br><span class="line">						runstate_set(RUN_STATE_PAUSED);        </span><br><span class="line">				&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此时只会将vm状态设为PAUSED.</p>
+<p>所以在libvirt迁移中,  先是incoming section load state逐设备逐queue的queue enable;</p>
+<p>再是qemu主线程vm_prepare_start 逐设备的dev config配置等;</p>
+<p>而后续libvirt会通过qmp下发cont启动qemu;</p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620789999-47fb15af-5a6f-4497-96b1-bf75bbf82ed2.png" alt="img"></p>
+<p>libvirt如何检查下发cont;</p>
+<p><a target="_blank" rel="noopener" href="https://blog.csdn.net/hbuxiaofei/article/details/131718923">https://blog.csdn.net/hbuxiaofei/article/details/131718923</a><br><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620812562-65a1c99f-ddaa-4c6c-91f1-8ba11c437d8f.png" alt="img"></p>
+<p>详情在15步循环检查状态, 可以看libvirt代码</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">libvirt </span><br><span class="line">src/qemu/qemu_migration.c </span><br><span class="line">qemuMigrationSrcWaitForCompletion    </span><br><span class="line">		while ((rv = qemuMigrationAnyCompleted(driver, vm, asyncJob,                                           </span><br><span class="line">																						dconn, flags)) != 1) &#123;        </span><br><span class="line">				if (rv &lt; 0)            </span><br><span class="line">						return rv;         </span><br><span class="line">				if (events) &#123;            </span><br><span class="line">						if (virDomainObjWait(vm) &lt; 0) &#123;                </span><br><span class="line">								if (virDomainObjIsActive(vm))                    </span><br><span class="line">										jobInfo-&gt;status = QEMU_DOMAIN_JOB_STATUS_FAILED;                </span><br><span class="line">								return -2;            </span><br><span class="line">						&#125;        </span><br><span class="line">				&#125; else &#123;            </span><br><span class="line">					/* Poll every 50ms for progress &amp; to allow cancellation */            </span><br><span class="line">					struct timespec ts = &#123; .tv_sec = 0, .tv_nsec = 50 * 1000 * 1000ull &#125;;             </span><br><span class="line">					</span><br><span class="line">					virObjectUnlock(vm);            </span><br><span class="line">					nanosleep(&amp;ts, NULL);            </span><br><span class="line">					virObjectLock(vm);        </span><br><span class="line">				&#125;    </span><br><span class="line">		&#125;</span><br></pre></td></tr></table></figure>
+
+<p>循环检查migration状态, 会通过qmp调用query-migrate查询;</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">libvirt/src/qemu/qemu_monitor_json.c </span><br><span class="line"></span><br><span class="line">qemuMonitorJSONGetMigrationStats    </span><br><span class="line">		virJSONValuePtr cmd = qemuMonitorJSONMakeCommand(&quot;query-migrate&quot;,                                                     </span><br><span class="line">																										NULL);</span><br></pre></td></tr></table></figure>
+
+<p>对于qemu而言,代码为</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">qemu migration/migration.c </span><br><span class="line"></span><br><span class="line">fill_source_migration_info:     </span><br><span class="line">		info-&gt;status = s-&gt;state;</span><br></pre></td></tr></table></figure>
+
+<p>所以需要保证优化的释放流程需要在libvirt的定时轮询到迁移完成之后释放.从而保证优化生效.</p>
+<h2 id="目的虚机恢复时间"><a href="#目的虚机恢复时间" class="headerlink" title="目的虚机恢复时间:"></a>目的虚机恢复时间:</h2><p>如上文所述, 目的虚机恢复从vm_start开始到虚机恢复执行的时间. 我们想弄清楚的是不考虑流表, 虚机何时可以收发,处理报文.</p>
+<p>首先是vm_start中耗时时间, 如停机时对称, 耗时时间比较大的有</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">qemu  </span><br><span class="line">hw/net/vhost_net.c </span><br><span class="line"></span><br><span class="line">vhost_net_start:     </span><br><span class="line">		r = k-&gt;set_guest_notifiers(qbus-&gt;parent, total_notifiers, true);    </span><br><span class="line">		if (r &lt; 0) &#123;        </span><br><span class="line">				error_report(&quot;Error binding guest notifier: %d&quot;, -r);        </span><br><span class="line">				goto err;    </span><br><span class="line">		&#125;</span><br></pre></td></tr></table></figure>
+
+<p>关于irqfd的处理也是比较耗时的, 多queue时恶劣时一个设备能达到好几十ms;</p>
+<p>可以考虑将其移动到presetup阶段, 改动有:<br><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620844342-c1184a53-dea7-463c-b6e3-831ed849e381.png" alt="img"></p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620856658-9a400465-21a1-473b-b354-c64bada62239.png" alt="img"></p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620867975-dcdb9630-e3eb-476e-ba43-09b5c73cb1f2.png" alt="img"></p>
+<p>即在presetup中提前处理, 后续start时再次进来检查已处理后return.</p>
+<p>不过修改了数个断言且不太清楚到底irqfd相关流程, 存在一定风险.</p>
+<p>在修改后上述的流程后, 发现启动时延主要有:</p>
+<p>每个设备的第一个需要reply的vhost-user消息;</p>
+<p>由于dev_config的set_status消息不需要reply,所以在进行set_guest_notifier和上个设备的dev_config其实同时进行的, 一定程度上遮掩了dev_config的时延;</p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620881466-260e4a9e-b191-46ee-b44b-af4a46e756af.png" alt="img"></p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620898080-d8d1844d-aa22-4b50-a103-20b7f0b5c234.png" alt="img"></p>
+<p>当set_guest_notifier被移动到presetup后, dev_config由于vhost-event线程串行就暴露了.</p>
+<p>多queue时对于callfd的处理能达到30ms;</p>
+<p>当vm_start之后, vcpu开始运行是不是就可以通流了, 个人理解至少还需要notify的完成, 毕竟只有notify完成才能做到正常的通流</p>
+<p>当前notify通过kickfd的事件串行到dpdk intr_thread处理, 对于该串行顺序, 本身具有一定的随机性, 不确定谁的kickfd先处理后处理.</p>
+<p>其中如果某一kickfd到qemu的VHOST_USER_SLAVE_VRING_HOST_NOTIFIER_MSG 产生阻塞,后续其他设备都将阻塞.</p>
+<p>从日志上看, 不同设备的完成VHOST_USER_SLAVE_VRING_HOST_NOTIFIER_MSG 之间会差距数秒, 某些queue的映射可能有很大的延迟,尚不确定原因.</p>
+<p>考虑将notifier也移动到preseutp进行;</p>
+<p>修改代码:</p>
+<p>qemu</p>
+<p>hw&#x2F;virtio&#x2F;vhost.c</p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620924534-0dff9833-cf44-4c94-bbc8-d653b5768fb2.png" alt="img"></p>
+<p>从而保证下文映射时vdev不为空, </p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">qemu hw/virtio/vhost-user.c </span><br><span class="line"></span><br><span class="line">vhost_user_backend_handle_vring_host_notifier:     </span><br><span class="line">		if (!virtio_has_feature(dev-&gt;protocol_features,                            </span><br><span class="line">														VHOST_USER_PROTOCOL_F_HOST_NOTIFIER) ||        </span><br><span class="line">														vdev == NULL || queue_idx &gt;= virtio_get_num_queues(vdev)) &#123;        </span><br><span class="line">				return -EINVAL;    </span><br><span class="line">		&#125;</span><br></pre></td></tr></table></figure>
+
+<p>vdpa driver在presetup_done时进行notifier映射, 测试代码;<br><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620936332-b0926e5c-bd2b-4a84-8f33-868f1a5911b2.png" alt="img"></p>
+<h2 id="流量-流表切换时间"><a href="#流量-流表切换时间" class="headerlink" title="流量&#x2F;流表切换时间"></a>流量&#x2F;流表切换时间</h2><p>关于流量的恢复时间:</p>
+<p>关于流量的恢复明显会有两段:</p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620947782-d7c6bad0-8b4e-4595-bb1a-e76684b7893a.png" alt="img"></p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620956185-c1f8c882-9204-4429-8bb4-c144ff5db0a9.png" alt="img"></p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620964546-d1c4137b-0b7b-49bc-9f71-cdca12b86e1f.png" alt="img"></p>
+<p>个人理解两段的原因在于uvn队列中飞行了一些迁移downtime时的ping包, 协议栈和dvn队列原则上也有飞行报文, 可是ping的正常时延在数十微秒级, 应该基本都能发出去,残留概率地;</p>
+<p>当迁移到目的虚机开始正常工作后, 目的虚机会立刻进行回包.</p>
+<p>也就是上图中的seq 32775, 从32775到32839其实都是近似相同时间回来的.</p>
+<p>后续再到流量的完全恢复就依赖外部网络,包括ovs, 交换机等的流量切换速度了.</p>
+<p>ovs提供命令可以提高流表刷新频率.</p>
+<p>ovs-vsctl set Open_vSwitch . other_config:max-revalidator&#x3D;20</p>
+<p>不过即使按照上文的优化手段, 看到最后一个kick的时间为:730.252到目的端飞行报文reply 731.177还有有着近乎数百ms的间隔, 尚未有很好的思路来理解这段时间的原因.</p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620981065-dc386260-374d-45e9-a4be-bd17fa9603e5.png" alt="img"></p>
+<p><img src="/../images/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/1747620992606-aa128bea-2f23-44f1-bd24-af36a5d4dcbd.png" alt="img"></p>
+
+                
+            </div>
+            <hr/>
+
+            
+
+    <div class="reprint" id="reprint-statement">
+        
+            <div class="reprint__author">
+                <span class="reprint-meta" style="font-weight: bold;">
+                    <i class="fas fa-user">
+                        文章作者:
+                    </i>
+                </span>
+                <span class="reprint-info">
+                    <a href="/about" rel="external nofollow noreferrer">ACanOfGas</a>
+                </span>
+            </div>
+            <div class="reprint__type">
+                <span class="reprint-meta" style="font-weight: bold;">
+                    <i class="fas fa-link">
+                        文章链接:
+                    </i>
+                </span>
+                <span class="reprint-info">
+                    <a href="https://acanofgas.github.io/2025/05/19/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/">https://acanofgas.github.io/2025/05/19/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/</a>
+                </span>
+            </div>
+            <div class="reprint__notice">
+                <span class="reprint-meta" style="font-weight: bold;">
+                    <i class="fas fa-copyright">
+                        版权声明:
+                    </i>
+                </span>
+                <span class="reprint-info">
+                    本博客所有文章除特別声明外，均采用
+                    <a href="https://creativecommons.org/licenses/by/4.0/deed.zh" rel="external nofollow noreferrer" target="_blank">CC BY 4.0</a>
+                    许可协议。转载请注明来源
+                    <a href="/about" target="_blank">ACanOfGas</a>
+                    !
+                </span>
+            </div>
+        
+    </div>
+
+    <script async defer>
+      document.addEventListener("copy", function (e) {
+        let toastHTML = '<span>复制成功，请遵循本文的转载规则</span><button class="btn-flat toast-action" onclick="navToReprintStatement()" style="font-size: smaller">查看</a>';
+        M.toast({html: toastHTML})
+      });
+
+      function navToReprintStatement() {
+        $("html, body").animate({scrollTop: $("#reprint-statement").offset().top - 80}, 800);
+      }
+    </script>
+
+
+
+            <div class="tag_share" style="display: block;">
+                <div class="post-meta__tag-list" style="display: inline-block;">
+                    
+                        <div class="article-tag">
+                            <span class="chip bg-color">无标签</span>
+                        </div>
+                    
+                </div>
+                <div class="post_share" style="zoom: 80%; width: fit-content; display: inline-block; float: right; margin: -0.15rem 0;">
+                    <link rel="stylesheet" type="text/css" href="/libs/share/css/share.min.css">
+<div id="article-share">
+
+    
+    <div class="social-share" data-sites="twitter,facebook,google,qq,qzone,wechat,weibo,douban,linkedin" data-wechat-qrcode-helper="<p>微信扫一扫即可分享！</p>"></div>
+    <script src="/libs/share/js/social-share.min.js"></script>
+    
+
+    
+
+</div>
+
+                </div>
+            </div>
+            
+                <div id="reward">
+    <a href="#rewardModal" class="reward-link modal-trigger btn-floating btn-medium waves-effect waves-light red">赏</a>
+
+    <!-- Modal Structure -->
+    <div id="rewardModal" class="modal">
+        <div class="modal-content">
+            <a class="close modal-close"><i class="fas fa-times"></i></a>
+            <h4 class="reward-title">你的赏识是我前进的动力</h4>
+            <div class="reward-content">
+                <div class="reward-tabs">
+                    <ul class="tabs row">
+                        <li class="tab col s6 alipay-tab waves-effect waves-light"><a href="#alipay">支付宝</a></li>
+                        <li class="tab col s6 wechat-tab waves-effect waves-light"><a href="#wechat">微 信</a></li>
+                    </ul>
+                    <div id="alipay">
+                        <img src="/medias/reward/alipay.jpg" class="reward-img" alt="支付宝打赏二维码">
+                    </div>
+                    <div id="wechat">
+                        <img src="/medias/reward/wechat.png" class="reward-img" alt="微信打赏二维码">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    $(function () {
+        $('.tabs').tabs();
+    });
+</script>
+
+            
+        </div>
+    </div>
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+<article id="prenext-posts" class="prev-next articles">
+    <div class="row article-row">
+        
+        <div class="article col s12 m6" data-aos="fade-up" data-aos="fade-up">
+            <div class="article-badge left-badge text-color">
+                <i class="far fa-dot-circle"></i>&nbsp;本篇
+            </div>
+            <div class="card">
+                <a href="/2025/05/19/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/">
+                    <div class="card-image">
+                        
+                        
+                        <img src="/medias/featureimages/1.jpg" class="responsive-img" alt="qemu/vdpa 热迁移优化分析">
+                        
+                        <span class="card-title">qemu/vdpa 热迁移优化分析</span>
+                    </div>
+                </a>
+                <div class="card-content article-content">
+                    <div class="summary block-with-text">
+                        
+                            
+                        
+                    </div>
+                    <div class="publish-info">
+                            <span class="publish-date">
+                                <i class="far fa-clock fa-fw icon-date"></i>2025-05-19
+                            </span>
+                        <span class="publish-author">
+                            
+                            <i class="fas fa-user fa-fw"></i>
+                            ACanOfGas
+                            
+                        </span>
+                    </div>
+                </div>
+
+                
+            </div>
+        </div>
+        
+        
+        <div class="article col s12 m6" data-aos="fade-up">
+            <div class="article-badge right-badge text-color">
+                下一篇&nbsp;<i class="fas fa-chevron-right"></i>
+            </div>
+            <div class="card">
+                <a href="/2025/05/19/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/">
+                    <div class="card-image">
+                        
+                        
+                        <img src="/medias/featureimages/14.jpg" class="responsive-img" alt="各CPU平台一些杂谈">
+                        
+                        <span class="card-title">各CPU平台一些杂谈</span>
+                    </div>
+                </a>
+                <div class="card-content article-content">
+                    <div class="summary block-with-text">
+                        
+                            
+                        
+                    </div>
+                    <div class="publish-info">
+                            <span class="publish-date">
+                                <i class="far fa-clock fa-fw icon-date"></i>2025-05-19
+                            </span>
+                        <span class="publish-author">
+                            
+                            <i class="fas fa-user fa-fw"></i>
+                            ACanOfGas
+                            
+                        </span>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+        
+    </div>
+</article>
+
+</div>
+
+
+
+<!-- 代码块功能依赖 -->
+<script type="text/javascript" src="/libs/codeBlock/codeBlockFuction.js"></script>
+
+
+
+<!-- 代码语言 -->
+
+<script type="text/javascript" src="/libs/codeBlock/codeLang.js"></script>
+
+
+<!-- 代码块复制 -->
+
+<script type="text/javascript" src="/libs/codeBlock/codeCopy.js"></script>
+
+
+<!-- 代码块收缩 -->
+
+<script type="text/javascript" src="/libs/codeBlock/codeShrink.js"></script>
+
+
+
+    </div>
+    <div id="toc-aside" class="expanded col l3 hide-on-med-and-down">
+        <div class="toc-widget card" style="background-color: white;">
+            <div class="toc-title"><i class="far fa-list-alt"></i>&nbsp;&nbsp;目录</div>
+            <div id="toc-content"></div>
+        </div>
+    </div>
+</div>
+
+<!-- TOC 悬浮按钮. -->
+
+<div id="floating-toc-btn" class="hide-on-med-and-down">
+    <a class="btn-floating btn-large bg-color">
+        <i class="fas fa-list-ul"></i>
+    </a>
+</div>
+
+
+<script src="/libs/tocbot/tocbot.min.js"></script>
+<script>
+    $(function () {
+        tocbot.init({
+            tocSelector: '#toc-content',
+            contentSelector: '#articleContent',
+            headingsOffset: -($(window).height() * 0.4 - 45),
+            collapseDepth: Number('0'),
+            headingSelector: 'h2, h3, h4'
+        });
+
+        // Set scroll toc fixed.
+        let tocHeight = parseInt($(window).height() * 0.4 - 64);
+        let $tocWidget = $('.toc-widget');
+        $(window).scroll(function () {
+            let scroll = $(window).scrollTop();
+            /* add post toc fixed. */
+            if (scroll > tocHeight) {
+                $tocWidget.addClass('toc-fixed');
+            } else {
+                $tocWidget.removeClass('toc-fixed');
+            }
+        });
+
+        
+        /* 修复文章卡片 div 的宽度. */
+        let fixPostCardWidth = function (srcId, targetId) {
+            let srcDiv = $('#' + srcId);
+            if (srcDiv.length === 0) {
+                return;
+            }
+
+            let w = srcDiv.width();
+            if (w >= 450) {
+                w = w + 21;
+            } else if (w >= 350 && w < 450) {
+                w = w + 18;
+            } else if (w >= 300 && w < 350) {
+                w = w + 16;
+            } else {
+                w = w + 14;
+            }
+            $('#' + targetId).width(w);
+        };
+
+        // 切换TOC目录展开收缩的相关操作.
+        const expandedClass = 'expanded';
+        let $tocAside = $('#toc-aside');
+        let $mainContent = $('#main-content');
+        $('#floating-toc-btn .btn-floating').click(function () {
+            if ($tocAside.hasClass(expandedClass)) {
+                $tocAside.removeClass(expandedClass).hide();
+                $mainContent.removeClass('l9');
+            } else {
+                $tocAside.addClass(expandedClass).show();
+                $mainContent.addClass('l9');
+            }
+            fixPostCardWidth('artDetail', 'prenext-posts');
+        });
+        
+    });
+</script>
+
+    
+
+</main>
+
+
+
+
+    <footer class="page-footer bg-color">
+    
+        <link rel="stylesheet" href="/libs/aplayer/APlayer.min.css">
+<style>
+    .aplayer .aplayer-lrc p {
+        
+        display: none;
+        
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 16px !important;
+    }
+
+    .aplayer .aplayer-lrc p.aplayer-lrc-current {
+        
+        display: none;
+        
+        font-size: 15px;
+        color: #42b983;
+    }
+
+    
+    .aplayer.aplayer-fixed.aplayer-narrow .aplayer-body {
+        left: -66px !important;
+    }
+
+    .aplayer.aplayer-fixed.aplayer-narrow .aplayer-body:hover {
+        left: 0px !important;
+    }
+
+    
+</style>
+<div class="">
+    
+    <div class="row">
+        <meting-js class="col l8 offset-l2 m10 offset-m1 s12"
+                   server="netease"
+                   type="playlist"
+                   id="503838841"
+                   fixed='true'
+                   autoplay='false'
+                   theme='#42b983'
+                   loop='all'
+                   order='random'
+                   preload='auto'
+                   volume='0.7'
+                   list-folded='true'
+        >
+        </meting-js>
+    </div>
+</div>
+
+<script src="/libs/aplayer/APlayer.min.js"></script>
+<script src="/libs/aplayer/Meting.min.js"></script>
+
+    
+
+    <div class="container row center-align"
+         style="margin-bottom: 0px !important;">
+        <div class="col s12 m8 l8 copy-right">
+            Copyright&nbsp;&copy;
+            
+                <span id="year">2019-2025</span>
+            
+            <a href="/about" target="_blank">ACanOfGas</a>
+            |&nbsp;Powered by&nbsp;<a href="https://hexo.io/" target="_blank">Hexo</a>
+            |&nbsp;Theme&nbsp;<a href="https://github.com/blinkfox/hexo-theme-matery" target="_blank">Matery</a>
+            
+            <br>
+            
+            
+            
+                
+            
+            
+                <span id="busuanzi_container_site_pv">
+                &nbsp;|&nbsp;<i class="far fa-eye"></i>&nbsp;总访问量:&nbsp;
+                    <span id="busuanzi_value_site_pv" class="white-color"></span>
+            </span>
+            
+            
+                <span id="busuanzi_container_site_uv">
+                &nbsp;|&nbsp;<i class="fas fa-users"></i>&nbsp;总访问人数:&nbsp;
+                    <span id="busuanzi_value_site_uv" class="white-color"></span>
+            </span>
+            
+            <br>
+
+            <!-- 运行天数提醒. -->
+            
+            <br>
+            
+        </div>
+        <div class="col s12 m4 l4 social-link social-statis">
+    <a href="https://github.com/blinkfox" class="tooltipped" target="_blank" data-tooltip="访问我的GitHub" data-position="top" data-delay="50">
+        <i class="fab fa-github"></i>
+    </a>
+
+
+
+    <a href="mailto:1181062873@qq.com" class="tooltipped" target="_blank" data-tooltip="邮件联系我" data-position="top" data-delay="50">
+        <i class="fas fa-envelope-open"></i>
+    </a>
+
+
+
+
+
+
+
+    <a href="tencent://AddContact/?fromId=50&fromSubId=1&subcmd=all&uin=1181062873" class="tooltipped" target="_blank" data-tooltip="QQ联系我: 1181062873" data-position="top" data-delay="50">
+        <i class="fab fa-qq"></i>
+    </a>
+
+
+
+
+
+
+
+    <a href="/atom.xml" class="tooltipped" target="_blank" data-tooltip="RSS 订阅" data-position="top" data-delay="50">
+        <i class="fas fa-rss"></i>
+    </a>
+
+</div>
+    </div>
+</footer>
+
+<div class="progress-bar"></div>
+
+
+    <!-- 搜索遮罩框 -->
+<div id="searchModal" class="modal">
+    <div class="modal-content">
+        <div class="search-header">
+            <span class="title"><i class="fas fa-search"></i>&nbsp;&nbsp;搜索</span>
+            <input type="search" id="searchInput" name="s" placeholder="请输入搜索的关键字"
+                   class="search-input">
+        </div>
+        <div id="searchResult"></div>
+    </div>
+</div>
+
+<script type="text/javascript">
+$(function () {
+    var searchFunc = function (path, search_id, content_id) {
+        'use strict';
+        $.ajax({
+            url: path,
+            dataType: "xml",
+            success: function (xmlResponse) {
+                // get the contents from search data
+                var datas = $("entry", xmlResponse).map(function () {
+                    return {
+                        title: $("title", this).text(),
+                        content: $("content", this).text(),
+                        url: $("url", this).text()
+                    };
+                }).get();
+                var $input = document.getElementById(search_id);
+                var $resultContent = document.getElementById(content_id);
+                $input.addEventListener('input', function () {
+                    var str = '<ul class=\"search-result-list\">';
+                    var keywords = this.value.trim().toLowerCase().split(/[\s\-]+/);
+                    $resultContent.innerHTML = "";
+                    if (this.value.trim().length <= 0) {
+                        return;
+                    }
+                    // perform local searching
+                    datas.forEach(function (data) {
+                        var isMatch = true;
+                        var data_title = data.title.trim().toLowerCase();
+                        var data_content = data.content.trim().replace(/<[^>]+>/g, "").toLowerCase();
+                        var data_url = data.url;
+                        data_url = data_url.indexOf('/') === 0 ? data.url : '/' + data_url;
+                        var index_title = -1;
+                        var index_content = -1;
+                        var first_occur = -1;
+                        // only match artiles with not empty titles and contents
+                        if (data_title !== '' && data_content !== '') {
+                            keywords.forEach(function (keyword, i) {
+                                index_title = data_title.indexOf(keyword);
+                                index_content = data_content.indexOf(keyword);
+                                if (index_title < 0 && index_content < 0) {
+                                    isMatch = false;
+                                } else {
+                                    if (index_content < 0) {
+                                        index_content = 0;
+                                    }
+                                    if (i === 0) {
+                                        first_occur = index_content;
+                                    }
+                                }
+                            });
+                        }
+                        // show search results
+                        if (isMatch) {
+                            str += "<li><a href='" + data_url + "' class='search-result-title'>" + data_title + "</a>";
+                            var content = data.content.trim().replace(/<[^>]+>/g, "");
+                            if (first_occur >= 0) {
+                                // cut out 100 characters
+                                var start = first_occur - 20;
+                                var end = first_occur + 80;
+                                if (start < 0) {
+                                    start = 0;
+                                }
+                                if (start === 0) {
+                                    end = 100;
+                                }
+                                if (end > content.length) {
+                                    end = content.length;
+                                }
+                                var match_content = content.substr(start, end);
+                                // highlight all keywords
+                                keywords.forEach(function (keyword) {
+                                    var regS = new RegExp(keyword, "gi");
+                                    match_content = match_content.replace(regS, "<em class=\"search-keyword\">" + keyword + "</em>");
+                                });
+
+                                str += "<p class=\"search-result\">" + match_content + "...</p>"
+                            }
+                            str += "</li>";
+                        }
+                    });
+                    str += "</ul>";
+                    $resultContent.innerHTML = str;
+                });
+            }
+        });
+    };
+
+    searchFunc('/search.xml', 'searchInput', 'searchResult');
+});
+</script>
+
+    <!-- 白天和黑夜主题 -->
+<div class="stars-con">
+    <div id="stars"></div>
+    <div id="stars2"></div>
+    <div id="stars3"></div>  
+</div>
+
+<script>
+    function switchNightMode() {
+        $('<div class="Cuteen_DarkSky"><div class="Cuteen_DarkPlanet"></div></div>').appendTo($('body')),
+        setTimeout(function () {
+            $('body').hasClass('DarkMode') 
+            ? ($('body').removeClass('DarkMode'), localStorage.setItem('isDark', '0'), $('#sum-moon-icon').removeClass("fa-sun").addClass('fa-moon')) 
+            : ($('body').addClass('DarkMode'), localStorage.setItem('isDark', '1'), $('#sum-moon-icon').addClass("fa-sun").removeClass('fa-moon')),
+            
+            setTimeout(function () {
+            $('.Cuteen_DarkSky').fadeOut(1e3, function () {
+                $(this).remove()
+            })
+            }, 2e3)
+        })
+    }
+</script>
+
+    <!-- 回到顶部按钮 -->
+<div id="backTop" class="top-scroll">
+    <a class="btn-floating btn-large waves-effect waves-light" href="#!">
+        <i class="fas fa-arrow-up"></i>
+    </a>
+</div>
+
+
+    <script src="/libs/materialize/materialize.min.js"></script>
+    <script src="/libs/masonry/masonry.pkgd.min.js"></script>
+    <script src="/libs/aos/aos.js"></script>
+    <script src="/libs/scrollprogress/scrollProgress.min.js"></script>
+    <script src="/libs/lightGallery/js/lightgallery-all.min.js"></script>
+    <script src="/js/matery.js"></script>
+
+    
+
+    
+    
+    
+
+    <!-- 雪花特效 -->
+    
+
+    <!-- 鼠标星星特效 -->
+    
+
+     
+        <script src="https://ssl.captcha.qq.com/TCaptcha.js"></script>
+        <script src="/libs/others/TencentCaptcha.js"></script>
+        <button id="TencentCaptcha" data-appid="xxxxxxxxxx" data-cbfn="callback" type="button" hidden></button>
+    
+
+    <!-- Baidu Analytics -->
+
+    <!-- Baidu Push -->
+
+<script>
+    (function () {
+        var bp = document.createElement('script');
+        var curProtocol = window.location.protocol.split(':')[0];
+        if (curProtocol === 'https') {
+            bp.src = 'https://zz.bdstatic.com/linksubmit/push.js';
+        } else {
+            bp.src = 'http://push.zhanzhang.baidu.com/push.js';
+        }
+        var s = document.getElementsByTagName("script")[0];
+        s.parentNode.insertBefore(bp, s);
+    })();
+</script>
+
+    
+    <script src="/libs/others/clicklove.js" async="async"></script>
+    
+    
+    <script async src="/libs/others/busuanzi.pure.mini.js"></script>
+    
+
+    
+
+    
+
+    <!--腾讯兔小巢-->
+    
+    
+
+    
+
+    
+
+    
+    <script src="/libs/instantpage/instantpage.js" type="module"></script>
+    
+
+</body>
+
+</html>
