@@ -437,6 +437,166 @@
 <p>Root entry：一个Bus一条</p>
 <p>Conext entry: 一个BDF一条</p>
 <p>Page表：多级页表</p>
+<p>可以打开DMA Debug调试信息，查看内核DMA相关的信息。</p>
+<p>N 页帧号(phy&gt;&gt;12), D dma_handle地址; L length</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901489318-50c2a527-b507-4334-b4e7-6458c8d49205.png" alt="img"></p>
+<p>Root&#x2F;Context Entry查看:HAW指DMA地址位宽,ACPI Struct中携带.</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901507178-860d45b5-3812-434f-a957-62814c27581f.png" alt="img"></p>
+<p>root_entry格式如下</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901534478-d5305e42-be83-4cb4-afb4-cfb53d183886.png" alt="img"></p>
+<p>context_entry格式如下</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901549221-d00e576a-d85b-435b-bc78-db44806d1534.png" alt="img"></p>
+<p>解析出来的TranslationType:00；Address Space Root: 指向页表；</p>
+<p>Address width: 010; Domain id 4.</p>
+<p>再去对应Vt-d手册来看：</p>
+<p>Tranlation type:00 两级阶段页表。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901758968-d1da0c28-5b69-4e02-a2b4-4c521e56ed5a.png" alt="img"></p>
+<p>Address space root：指向页表</p>
+<p>Address witdh:010,48 bit 位宽。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901835807-413dbab6-e510-4f31-8e04-f7dd5e6951ac.png" alt="img"></p>
+<p>Domain id：4</p>
+<p>再看看PageEntry:</p>
+<p>地址映射情况：</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901883918-1c9b0c35-dc5b-4541-ab6f-8decaea90258.png" alt="img"></p>
+<p>其中4kb PageEntry；</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901914026-511238aa-e539-4801-badf-f404f2cafa81.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901918013-edde658e-4135-4160-aebb-e74ac19a4f98.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747901930560-41f28331-d524-4d5e-9013-aff2844bc1dc.png" alt="img"></p>
+<p>可以看到对应页表项的SNP、W、R标志位都被置上。</p>
+<h3 id="StreamingMap分析"><a href="#StreamingMap分析" class="headerlink" title="StreamingMap分析"></a>StreamingMap分析</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">#define dma_map_page(d, p, o, s, r) dma_map_page_attrs(d, p, o, s, r, 0)</span><br><span class="line">    if (dma_map_direct(dev, ops) ||</span><br><span class="line">        arch_dma_map_page_direct(dev, page_to_phys(page) + offset + size))</span><br><span class="line">        addr = dma_direct_map_page(dev, page, offset, size, dir, attrs);</span><br><span class="line">    else</span><br><span class="line">        addr = ops-&gt;map_page(dev, page, offset, size, dir, attrs);</span><br></pre></td></tr></table></figure>
+
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902115821-fb0d0acb-e3ac-46cf-9065-5b1f2adb7d0b.png" alt="img"></p>
+<p>coherent和之前dma_alloc_coherent类似，默认是cache-snp的。</p>
+<p>DMA_TO_DEVICE决定后续的PTE READ&#x2F;PTE WRITE特性，其他无明显区别。</p>
+<p>在x86 Streaming Map PageTable方面：</p>
+<p>对于DMA_TO_DEVICE发包：</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902274092-22c62885-2720-40eb-91c3-501ea62c3b07.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902277902-2fbc41ec-9ca0-4eab-9484-ae4b30f1dba2.png" alt="img"></p>
+<p>发包只读没有W flag；</p>
+<p>DMA_FROM_DEVICE：收包：</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902292718-a3a7e972-7e60-4f21-a93c-78fb18d9993b.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902297019-d7639544-8ab3-400e-81b3-64453e9eaebc.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902303081-5045aa79-4974-4d2d-a5b8-41794d5278bd.png" alt="img"></p>
+<p>收包同时具备W&#x2F;R flag。</p>
+<p>对于streaming Map Pagetable相关的sync接口：：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">X86 Streaming Map PageTable:</span><br><span class="line">dma_sync_single_for_cpu</span><br><span class="line">dma_sync_single_for_device</span><br><span class="line"></span><br><span class="line">.sync_single_for_cpu	= iommu_dma_sync_single_for_cpu,</span><br><span class="line">.sync_single_for_device	= iommu_dma_sync_single_for_device,</span><br><span class="line">void iommu_dma_sync_single_for_cpu(struct device *dev, dma_addr_t dma_handle,</span><br><span class="line">		size_t size, enum dma_data_direction dir)</span><br><span class="line">&#123;</span><br><span class="line">	phys_addr_t phys;</span><br><span class="line"></span><br><span class="line">	if (dev_is_dma_coherent(dev) &amp;&amp; !dev_use_swiotlb(dev, size, dir))</span><br><span class="line">		return;</span><br><span class="line"></span><br><span class="line">	phys = iommu_iova_to_phys(iommu_get_dma_domain(dev), dma_handle);</span><br><span class="line">	if (!dev_is_dma_coherent(dev))</span><br><span class="line">		arch_sync_dma_for_cpu(phys, size, dir);</span><br><span class="line"></span><br><span class="line">	swiotlb_sync_single_for_cpu(dev, phys, size, dir);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>针对coherent device，所有dma buffer都是coherent buffer，无需主动sync内存。</p>
+<h2 id="DPDK-VFIO-Translate场景"><a href="#DPDK-VFIO-Translate场景" class="headerlink" title="DPDK VFIO Translate场景"></a>DPDK VFIO Translate场景</h2><p>使用2M的hugepage;</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902542112-d0a00705-9ef6-4b14-b173-6180b42dadfd.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902548288-9483925a-ab03-4af8-ac1f-bd847c6f297e.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902553615-a974baa4-5e74-46da-baa4-895aa9a549a1.png" alt="img"></p>
+<p>1G的hugepage也是类似的：</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902566683-01143266-e12a-4041-9e7e-f41b5daa6c0f.png" alt="img"></p>
+<h2 id="那在Passthrough场景呢"><a href="#那在Passthrough场景呢" class="headerlink" title="那在Passthrough场景呢"></a>那在Passthrough场景呢</h2><p>Context Table如下：</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902682824-044f1a28-e30f-46ec-92d1-7fd4517e2d6e.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902689113-ba5618f0-5638-4b12-9e78-02872029020f.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902694717-9f2baee2-540a-43d0-a6d7-a0b97b83dc66.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902700136-72ce0a2b-0157-48ef-8978-fa02bc5b10d5.png" alt="img"></p>
+<p>此时对应的Translation Type: 10，页表指针被忽略。</p>
+<p>Domain id: 1；</p>
+<p>Address width: 010;</p>
+<p>未转换的请求被处理作为passthrough。</p>
+<p>Pagetable全空时：</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902630961-300b34d7-5628-47ab-996c-72e43d65afc4.png" alt="img"></p>
+<p>DMA地址&#x3D;物理地址；</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902643874-3ba9cba4-97d3-4cd9-ba7a-6bb469a47461.png" alt="img"></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">static inline bool dma_alloc_direct(struct device *dev,</span><br><span class="line">		const struct dma_map_ops *ops)</span><br><span class="line">&#123;</span><br><span class="line">	return dma_go_direct(dev, dev-&gt;coherent_dma_mask, ops);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">static bool dma_go_direct(struct device *dev, dma_addr_t mask,</span><br><span class="line">		const struct dma_map_ops *ops)</span><br><span class="line">&#123;</span><br><span class="line">	if (use_dma_iommu(dev))</span><br><span class="line">		return false;</span><br><span class="line"></span><br><span class="line">	if (likely(!ops))</span><br><span class="line">		return true;</span><br><span class="line"></span><br><span class="line">#ifdef CONFIG_DMA_OPS_BYPASS</span><br><span class="line">	if (dev-&gt;dma_ops_bypass)</span><br><span class="line">		return min_not_zero(mask, dev-&gt;bus_dma_limit) &gt;=</span><br><span class="line">			    dma_direct_get_required_mask(dev);</span><br><span class="line">#endif</span><br><span class="line">	return false;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">if (dma_alloc_direct(dev, ops))</span><br><span class="line">  return dma_direct_alloc_pages(dev, size, dma_handle, dir, gfp);</span><br></pre></td></tr></table></figure>
+
+<p>dev-&gt;dma_ops为空,使用direct接口分配映射内存.</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">dma_direct_alloc:</span><br><span class="line">	 arch_dma_prep_coherent/arch_dma_alloc/arch_dma_set_uncached</span><br></pre></td></tr></table></figure>
+
+<p>此时，存在 不同架构对内存设置特定属性，解决coherent问题。</p>
+<p>在x86环境dev_is_dma_coherent(dev)无需设置任何属性值，直接进行物理地址的转换返回。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747902987215-f57d8cab-502b-488b-8393-c82ee9233448.png" alt="img"></p>
+<p>• Request.NS is the No-Snoop bit that comes with a DMA transaction.</p>
+<p>在IOMMU 开启情况Passthough模式下，</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br></pre></td><td class="code"><pre><span class="line">static inline dma_addr_t dma_direct_map_page(struct device *dev,</span><br><span class="line">		struct page *page, unsigned long offset, size_t size,</span><br><span class="line">		enum dma_data_direction dir, unsigned long attrs)</span><br><span class="line">&#123;</span><br><span class="line">	phys_addr_t phys = page_to_phys(page) + offset;</span><br><span class="line">	dma_addr_t dma_addr = phys_to_dma(dev, phys);</span><br><span class="line"></span><br><span class="line">	if (is_swiotlb_force_bounce(dev)) &#123;</span><br><span class="line">		if (is_pci_p2pdma_page(page))</span><br><span class="line">			return DMA_MAPPING_ERROR;</span><br><span class="line">		return swiotlb_map(dev, phys, size, dir, attrs);</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	if (unlikely(!dma_capable(dev, dma_addr, size, true)) ||</span><br><span class="line">	    dma_kmalloc_needs_bounce(dev, size, dir)) &#123;</span><br><span class="line">		if (is_pci_p2pdma_page(page))</span><br><span class="line">			return DMA_MAPPING_ERROR;</span><br><span class="line">		if (is_swiotlb_active(dev))</span><br><span class="line">			return swiotlb_map(dev, phys, size, dir, attrs);</span><br><span class="line"></span><br><span class="line">		dev_WARN_ONCE(dev, 1,</span><br><span class="line">			     &quot;DMA addr %pad+%zu overflow (mask %llx, bus limit %llx).\n&quot;,</span><br><span class="line">			     &amp;dma_addr, size, *dev-&gt;dma_mask, dev-&gt;bus_dma_limit);</span><br><span class="line">		return DMA_MAPPING_ERROR;</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	if (!dev_is_dma_coherent(dev) &amp;&amp; !(attrs &amp; DMA_ATTR_SKIP_CPU_SYNC))</span><br><span class="line">		arch_sync_dma_for_device(phys, size, dir);</span><br><span class="line">	return dma_addr;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>swiotlb_force貌似和隐私计算有关，暂不讨论。</p>
+<p>主要可以看出，dma_coherent时，无需对内存PAT进行处理。</p>
+<p>dma_direct_sync_single_for_cpu不在过多赘述。在x86环境下根据coherent基本无关。</p>
+<h3 id="Passthrough情况下使用DPDK，VFIO"><a href="#Passthrough情况下使用DPDK，VFIO" class="headerlink" title="Passthrough情况下使用DPDK，VFIO"></a>Passthrough情况下使用DPDK，VFIO</h3><p>使用virtio-net VFIO，DPDK启动后发现重新分配iommu domain, 该device又变成了translate了</p>
+<p>此时DPDK进程仍然使用VA模式。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903533077-bde5f41e-ef71-4749-be2e-bd2c9e4b9791.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903537314-1f3db3c3-8fd3-4ca1-921b-1ad2846072e9.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903540822-48c4b7a6-cce0-4b12-ab4f-942d54c0d47a.png" alt="img"></p>
+<h3 id="Passthrough情况下使用DPDK，UIO"><a href="#Passthrough情况下使用DPDK，UIO" class="headerlink" title="Passthrough情况下使用DPDK，UIO"></a>Passthrough情况下使用DPDK，UIO</h3><p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903584470-df0405ae-c879-43f9-ba4f-421bdddeb642.png" alt="img"></p>
+<p>Mellanox不会产生Passthrough到Translated的切换。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903598085-64ce71e5-4326-43d6-99d2-1939ab5ff82f.png" alt="img"></p>
+<p>仍保持Translated的切换，但是mellanox的iova支持是DC(Donot Care)。</p>
+<p>甚至如果两个device，一个使用uio，一个使用vfio。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903622285-caf616d5-4edc-407a-b7ff-e8f4d472f71f.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903625587-ba9cf23e-f12b-48e9-863e-f2e02a292f38.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903628455-c94c4ad8-d76f-4f5c-a677-5ad4fc06749a.png" alt="img"></p>
+<p>此时，可以理解vfio&#x2F;mlx驱动有地址映射能力，所以不介意iova是啥，可以va，可以pa。</p>
+<p>如果上图IOMMU页表将iova&#x3D;pa的映射表进行了映射。</p>
+<p>uio时该场景，只支持iova为PA。</p>
+<p>可以看到DPDK的代码:</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br></pre></td><td class="code"><pre><span class="line">enum rte_iova_mode</span><br><span class="line">pci_device_iova_mode(const struct rte_pci_driver *pdrv,</span><br><span class="line">		     const struct rte_pci_device *pdev)</span><br><span class="line">&#123;</span><br><span class="line">	enum rte_iova_mode iova_mode = RTE_IOVA_DC;</span><br><span class="line"></span><br><span class="line">	switch (pdev-&gt;kdrv) &#123;</span><br><span class="line">	case RTE_PCI_KDRV_VFIO: &#123;</span><br><span class="line">#ifdef VFIO_PRESENT</span><br><span class="line">		static int is_vfio_noiommu_enabled = -1;</span><br><span class="line"></span><br><span class="line">		if (is_vfio_noiommu_enabled == -1) &#123;</span><br><span class="line">			if (rte_vfio_noiommu_is_enabled() == 1)</span><br><span class="line">				is_vfio_noiommu_enabled = 1;</span><br><span class="line">			else</span><br><span class="line">				is_vfio_noiommu_enabled = 0;</span><br><span class="line">		&#125;</span><br><span class="line">		if (is_vfio_noiommu_enabled != 0)</span><br><span class="line">			iova_mode = RTE_IOVA_PA;</span><br><span class="line">		else if ((pdrv-&gt;drv_flags &amp; RTE_PCI_DRV_NEED_IOVA_AS_VA) != 0)</span><br><span class="line">			iova_mode = RTE_IOVA_VA;</span><br><span class="line">#endif</span><br><span class="line">		break;</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	case RTE_PCI_KDRV_IGB_UIO:</span><br><span class="line">	case RTE_PCI_KDRV_UIO_GENERIC:</span><br><span class="line">		iova_mode = RTE_IOVA_PA;</span><br><span class="line">		break;</span><br><span class="line"></span><br><span class="line">	default:</span><br><span class="line">		if ((pdrv-&gt;drv_flags &amp; RTE_PCI_DRV_NEED_IOVA_AS_VA) != 0)</span><br><span class="line">			iova_mode = RTE_IOVA_VA;</span><br><span class="line">		break;</span><br><span class="line">	&#125;</span><br><span class="line">	return iova_mode;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>DPDK代码默认pci_driver所依赖的地址模式为RTE_IOVA_DC(DonotCare.)</p>
+<p>后续根据IOMMU状态决定使用iova&#x3D;pa&#x2F;va。IOMMU enable时为va（包含pass-through）,Disable为PA.</p>
+<p>在IOMMU关闭时，绑定VFIO报错，仅能使用UIO。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903840881-404b8418-cde5-49c5-a64d-f00e134ebdc6.png" alt="img"></p>
+<p>DPDK使用PA模式。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747903853724-155ec9b5-3d33-4a72-a575-6b45f3f95fb5.png" alt="img"></p>
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>分析到现在，可以得出dpdk在iommu开启时，使用va作为iova，除非有uio的driver显式申明自己需要使用pa，才会使用pa作为iova。</p>
+<p>在passthrough下，内核默认使用pa，iommu处于pt模式。</p>
+<p>translate下，内核也使用va，iommu处于translate模式。</p>
+<p>但vfio都会将iommu切换到translate模式。</p>
+<p>故现在想做一套buricated driver，在iommu&#x3D;off情况下，无需过多设计，默认使用pa，内核和dpdk的pa肯定是不会冲突的。</p>
+<p>在iommu&#x3D;on,passthrough模式下，内核使用pa，dpdk使用va，此时要么内核驱动把自己转换成va模式，也就是把iommu转换成translate，才有实现的可能性。要么dpdk修改代码，让dpdk框架在这种模式下使用pa。</p>
+<p>在iommu&#x3D;on,translate模式下，内核使用va，dpdk也使用va。这个时候，就需要考虑两个va是否可能冲突，如果冲突，需要怎么转换。如果不冲突，此时内核需要实现vfio的部分功能，解析页表，获取hugepage的pa，使用iommu_map 将pa映射到不冲突的va上。</p>
+<p>那么内核驱动可以把自己转换成va模式吗？iova会冲突吗？</p>
+<h2 id="VFIO怎么把passthrough模式转换成translate模式"><a href="#VFIO怎么把passthrough模式转换成translate模式" class="headerlink" title="VFIO怎么把passthrough模式转换成translate模式"></a>VFIO怎么把passthrough模式转换成translate模式</h2><p>VFIO实现</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br></pre></td><td class="code"><pre><span class="line">static int vfio_iommu_type1_attach_group(void *iommu_data,</span><br><span class="line">					 struct iommu_group *iommu_group)</span><br><span class="line">	domain-&gt;domain = iommu_domain_alloc(bus);</span><br><span class="line">	if (!domain-&gt;domain) &#123;</span><br><span class="line">		ret = -EIO;</span><br><span class="line">		goto out_free;</span><br><span class="line">	&#125;</span><br><span class="line">static int __iommu_attach_group(struct iommu_domain *domain,</span><br><span class="line">				struct iommu_group *group)</span><br><span class="line">&#123;</span><br><span class="line">	int ret;</span><br><span class="line"></span><br><span class="line">	if (group-&gt;default_domain &amp;&amp; group-&gt;domain != group-&gt;default_domain)</span><br><span class="line">		return -EBUSY;</span><br><span class="line"></span><br><span class="line">	ret = __iommu_group_for_each_dev(group, domain,</span><br><span class="line">					 iommu_group_do_attach_device);</span><br><span class="line">	if (ret == 0)</span><br><span class="line">		group-&gt;domain = domain;</span><br><span class="line"></span><br><span class="line">	return ret;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">struct iommu_group &#123;</span><br><span class="line">	struct kobject kobj;</span><br><span class="line">	struct kobject *devices_kobj;</span><br><span class="line">	struct list_head devices;</span><br><span class="line">	struct mutex mutex;</span><br><span class="line">	struct blocking_notifier_head notifier;</span><br><span class="line">	void *iommu_data;</span><br><span class="line">	void (*iommu_data_release)(void *iommu_data);</span><br><span class="line">	char *name;</span><br><span class="line">	int id;</span><br><span class="line">	struct iommu_domain *default_domain;</span><br><span class="line">	struct iommu_domain *domain;</span><br><span class="line">	struct list_head entry;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>vfio驱动bind group-&gt;container时候新分配了struct iommu_domain，但是不修改default_domain。</p>
+<p>DMA接口通过default_domain进行映射。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747904824913-bdfa5a40-4b14-467e-9dd5-2d48df6d5ae7.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747904840606-b963a308-16a8-4914-bafc-26cad7c18e1e.png" alt="img"></p>
+<p>修改default_domain方式，内核启动参数passthrough&#x3D;0&#x2F;1时，可通过&#x2F;sys&#x2F;kernel&#x2F;iommu_groups&#x2F;xx&#x2F;type来修改default_dma行为，此时驱动需要解绑重新加载。</p>
+<p>rte_memseg_list：</p>
+<p>struct rte_fbarraymemseg_arr; 理解为包含了memseg的数组。</p>
+<p>memseg_list一段虚拟地址连续的空间。</p>
+<p>rte_memseg标志着一页内存。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905069112-34439f52-7087-43c1-a37e-008cd244d27c.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905074718-7ae51d3a-910a-458f-8bc6-5f890799ff61.png" alt="img"></p>
+<p>DPDK内存管理：</p>
+<p>rte_memseg初始化:</p>
+<p>Legacy:（1）基于IOVA模式设置memseg的iova地址。</p>
+<p>（2）后续确认qsort基于iova进行排序。</p>
+<p>（3）将iova连续的memseg remap映射回memseg_list中。</p>
+<p>保证iova连续的内存的va一定连续。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905127698-dbde8f64-411c-453a-b0a5-d6fb96cb8c0b.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905135092-7bf0d024-b67a-437c-b078-bbee6fef9185.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905138459-d12476d8-5dba-4594-91cf-98cb84088a4e.png" alt="img"></p>
+<p>Dynamic模式，根据使用后续动态分配内存。动态内存由于动态分配，无法进行legacy的重排操作。在PA模式下无法基于内存连续性管理。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905161376-55f6cdb9-cd53-48a6-afdd-295e3df81cd8.png" alt="img"></p>
+<p>故后续memzone都是根据对齐特性，连续特性，NUMA ID从rte_memseg_list获取rte_memseg中并分配。</p>
+<p>而mempool是针对mbuf从rte_memseg中分配，在其之上考虑多核并发无锁队列等特性。</p>
+<p>本质上memzone&#x2F;mempool只是对memseg的包装，连续性在rte_memseg_list标注出来。</p>
+<p>那么dpdk的iova地址是多少呢？</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">uint64_t eal_get_baseaddr(void)</span><br><span class="line">&#123;</span><br><span class="line">	/*</span><br><span class="line">	 * Linux kernel uses a really high address as starting address for</span><br><span class="line">	 * serving mmaps calls. If there exists addressing limitations and IOVA</span><br><span class="line">	 * mode is VA, this starting address is likely too high for those</span><br><span class="line">	 * devices. However, it is possible to use a lower address in the</span><br><span class="line">	 * process virtual address space as with 64 bits there is a lot of</span><br><span class="line">	 * available space.</span><br><span class="line">	 *</span><br><span class="line">	 * Current known limitations are 39 or 40 bits. Setting the starting</span><br><span class="line">	 * address at 4GB implies there are 508GB or 1020GB for mapping the</span><br><span class="line">	 * available hugepages. This is likely enough for most systems, although</span><br><span class="line">	 * a device with addressing limitations should call</span><br><span class="line">	 * rte_mem_check_dma_mask for ensuring all memory is within supported</span><br><span class="line">	 * range.</span><br><span class="line">	 */</span><br><span class="line">#if defined(RTE_ARCH_LOONGARCH)</span><br><span class="line">	return 0x7000000000ULL;</span><br><span class="line">#else</span><br><span class="line">	return 0x100000000ULL;</span><br><span class="line">#endif</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以看到dpdk从4GB以上开始使用。</p>
+<p>而内核DMA地址优先分配32位。</p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905746942-de6577d1-8e94-42f8-bce8-897c17618ca7.png" alt="img"></p>
+<p><img src="/../images/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/1747905769175-236b8f2e-d55b-4aad-80a8-4c71b8469d9c.png" alt="img"></p>
+<p>32位失败时，从64位查找。</p>
+<p>从64位的高位下降到0x100000000ULL，有巨大的空间，所以不会冲突。</p>
+<p>但是可能在某个场景下，内核配置为passthrough，但是设备通过default_domain修改为dma模式。</p>
+<p>此时和另一个设备使用uio一起加入dpdk。此时iova&#x3D;pa，可能和内核的低32位iova冲突。</p>
+<p>此时想法是在dpdk driver中特意把iova msb最高位置上。</p>
+<p>这样冲突的可能性是要在内核用完4G之后，地址空间的一半都用完之后，才会冲突。可能性基本没有。</p>
+<p>最好的方式是调用reserve_iova来保持一致性keep consistent，</p>
+<p>但是iommu_dma_cookie不是导出的符号，我们不能获取struct iova_domain通过iommu_domain-&gt;iova_cookie-&gt;iovad。</p>
+<p>那么也就是iommu&#x3D;off下，无需考虑dma的事情；</p>
+<p>iommu&#x3D;on passthrough下，要么通过修改dpdk代码设置成pa mode，要么通过修改sysfs改成dma type。</p>
+<p>Iommu&#x3D;on translate下，需要驱动通过页表找到pa，然后进行iova-&gt;pa的映射。</p>
+<p>那么解析页表好做吗？当然也不好做，这时候推荐vfio_pin_pages接口，实现一套mdev的框架，利用vfio帮我们干这事。</p>
+<p>详情请看vfio-mdev。</p>
 
                 
             </div>

@@ -4,11 +4,15 @@
 
 <head>
     <meta charset="utf-8">
-    <meta name="keywords" content="各CPU平台一些杂谈, ACanOfGas Blog">
-    <meta name="description" content="本文主要想介绍一些个人当下对cpu的一些理解，以及记录一些pcie&amp;#x2F;dma性能方面的调试思考。
-CPU架构
-
-这里贴CPU的架构框图还是想表达当前CPU的多发射（Multiple Issue），也就是预取模会一次性预取多条指令，然">
+    <meta name="keywords" content="低时延网卡技术分析, ACanOfGas Blog">
+    <meta name="description" content="主流现状标卡+Linux内核网络协议栈
+数据在相关cpu上下文中处理：
+（1）用户态应用程序
+（2）内核态协议栈
+（2）内核态定时器
+（3）中断
+（4）收发包软中断
+各个上下文之间切换，休眠，唤醒机制；Cpu cache颠簸 对性能的影响。">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="renderer" content="webkit|ie-stand|ie-comp">
@@ -20,7 +24,7 @@ CPU架构
     <!-- Global site tag (gtag.js) - Google Analytics -->
 
 
-    <title>各CPU平台一些杂谈 | ACanOfGas Blog</title>
+    <title>低时延网卡技术分析 | ACanOfGas Blog</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     
 
@@ -315,12 +319,12 @@ CPU架构
 
 
 
-<div class="bg-cover pd-header post-cover" style="background-image: url('/medias/featureimages/14.jpg')">
+<div class="bg-cover pd-header post-cover" style="background-image: url('/medias/featureimages/7.jpg')">
     <div class="container" style="right: 0px;left: 0px;">
         <div class="row">
             <div class="col s12 m12 l12">
                 <div class="brand">
-                    <h1 class="description center-align post-title">各CPU平台一些杂谈</h1>
+                    <h1 class="description center-align post-title">低时延网卡技术分析</h1>
                 </div>
             </div>
         </div>
@@ -356,7 +360,7 @@ CPU架构
                 
                 <div class="post-date info-break-policy">
                     <i class="far fa-calendar-minus fa-fw"></i>发布日期:&nbsp;&nbsp;
-                    2025-05-19
+                    2025-05-22
                 </div>
                 
 
@@ -377,114 +381,157 @@ CPU架构
 
         <div class="card-content article-card-content">
             <div id="articleContent">
-                <p>本文主要想介绍一些个人当下对cpu的一些理解，以及记录一些pcie&#x2F;dma性能方面的调试思考。</p>
-<h2 id="CPU架构"><a href="#CPU架构" class="headerlink" title="CPU架构"></a>CPU架构</h2><p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520000842047.png" alt="image-20250520000842047"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520000927518.png" alt="image-20250520000927518"></p>
-<p>这里贴CPU的架构框图还是想表达当前CPU的多发射（Multiple Issue），也就是预取模会一次性预取多条指令，然后发射到流水线中。</p>
-<p>超标量（Superscalar）指的是CPU内部执行单元EU基于功能进行分类，加法器，乘法器，浮点运算、向量运算等。每种类型的EU也不止一个，此时CPU内部实际上可以并发执行多条指令。但没那么理想的是，指令间存在指令依赖，以及CPU的order序的问题。</p>
-<p>所以还需要增加Reorder Buffer，解决order的问题。当然尽可能的乱序肯定有助于性能。</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520224637730.png" alt="image-20250520224637730"></p>
-<p>又拿出每次都拿的这张图。可以看到coherence和consistency的问题。</p>
-<p>coherence指的是同一块内存被多个观察者observer读写时的问题，比如多个cpu的cache同时具备一块内存的cache，此时多个cpu一起读写的问题。</p>
-<p>而Consistent指的是X、Y等多个地址被不同处理器读写，此时互相之间的看到的顺序问题。</p>
-<p>本篇主要讨论Consistency的问题。</p>
-<p>下面是简单的某些处理器架构的Memory Order总结</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520225440319.png" alt="image-20250520225440319"></p>
-<p>这里面的应该是有专业的论文定义的每种order以及运算。</p>
-<p>Sequential Consistency：绝对一致性 、Relaxed Consistency:、Weak Consistency、Total store order: x86的一致性</p>
-<p>代码示例：</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520225717667.png" alt="image-20250520225717667"></p>
-<p>P0给x地址写1，给y地址写1；</p>
-<p>P1从y读取到r1寄存器中，从x读取到r2寄存器中。</p>
-<p>此时x和y初始值是0，此时不可能存在r1&#x3D;1和r2&#x3D;0。</p>
-<p>因为对于P0 store-store是不被允许的；对于P1 Load-Load是不被允许的。</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520230145245.png" alt="image-20250520230145245"></p>
-<p>P0给x地址写1，读取y内存到r1中；</p>
-<p>P1给y地址写1，读取x内存到r2中。</p>
-<p>此时r1&#x3D;0和r2&#x3D;0是可能的。因为Store-Reload是允许的，也就是读取允许提前到之前的写之前。</p>
-<p>也就是M2可以早于M1执行；M4可以早于M3执行。</p>
-<h2 id="DMA一致性"><a href="#DMA一致性" class="headerlink" title="DMA一致性"></a>DMA一致性</h2><p>又回到我想聊得DMA一致性来看。</p>
-<p>需要解决Cache一致性。</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521000103258.png" alt="image-20250521000103258"></p>
-<p>外设和CPU都是内存的观测者observer。</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520230818058.png" alt="image-20250520230818058"></p>
-<p>个人理解在现代服务器的CPU上，都是由3，也就是硬件来解决cache一致性。</p>
-<p>基于对Intel IOMMU driver的代码理解：</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">iommu_dma_alloc:</span><br><span class="line">		int ioprot = dma_info_to_prot(DMA_BIDIRECTIONAL, coherent, attrs);</span><br><span class="line">		*handle = __iommu_dma_map(dev, page_to_phys(page), size, ioprot, dev-coherent_dma_mask)</span><br></pre></td></tr></table></figure>
-
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520231441029.png" alt="image-20250520231441029"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520231449886.png" alt="image-20250520231449886"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520231501815.png" alt="image-20250520231501815"></p>
-<p>可以看到根据DMA ioprot映射属性，最后会设置pte的prot字段。</p>
-<p>所以Intel iommu会开启Snoop flag来嗅探实现dma一致性。</p>
-<p>Intel_iommu还提供了debug表项可以查看：</p>
-<p>DMA_TO_DEVICE表示发包</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232135872.png" alt="image-20250520232135872"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232233848.png" alt="image-20250520232233848"></p>
-<p>可以看到PTE表项。</p>
-<p>对于DMA_FROM_DEVICE 收包</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232332388.png" alt="image-20250520232332388"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232402797.png" alt="image-20250520232402797"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232438067.png" alt="image-20250520232438067"></p>
-<p>可以看到PTE表项最后是0x….803，803指的是W&#x2F;R&#x2F;SNP flag为1，表示可写可读、SNP嗅探开启。</p>
-<p>Intel还支持DDIO技术</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232643247.png" alt="image-20250520232643247"></p>
-<p>DDIO指的是DMA可以直接嗅探到cache中，以提升软硬件交互部分DMA性能。而且当前的L3 cache都是数十MB的规格，足以支撑许多比如描述符buffer了。</p>
-<h3 id="AMD平台DMA特性"><a href="#AMD平台DMA特性" class="headerlink" title="AMD平台DMA特性"></a>AMD平台DMA特性</h3><p>至于在AMD平台上，就不具备DDIO能力。</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232957814.png" alt="image-20250520232957814"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520232904648.png" alt="image-20250520232904648"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233012575.png" alt="image-20250520233012575"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233041699.png" alt="image-20250520233041699"></p>
-<p>可以看到AMD上由于不具备DDIO能力，所以提出了在AMD上iperf打流时，不使能cache做内存拷贝。</p>
-<p>因为后续发包时，dma读一定和cache产生争抢，导致cache颠簸。所以索性不使用cache了。</p>
-<p>但我个人在一些AMD单板机上做过测试，感觉区别不大。</p>
-<h3 id="x86内存屏障"><a href="#x86内存屏障" class="headerlink" title="x86内存屏障"></a>x86内存屏障</h3><p>可以看到在x86上，io的wmb()和rmb()都是编译器级别的屏障，没有额外的指令。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">#define rte_io_mb() rte_mb()</span><br><span class="line">#define rte_io_wmb() rte_compiler_barrier()</span><br><span class="line">#define rte_io_rmb() rte_compiler_barrier()</span><br><span class="line"></span><br><span class="line">#define rte_mb() _mm_mfence()</span><br><span class="line">#define rte_wmb() _mm_sfence()</span><br><span class="line">#define rte_rmb() _mm_lfence()</span><br><span class="line">#define rte_smp_wmb() rte_compiler_barrier()</span><br><span class="line">#define rte_smp_rmb() rte_compiler_barrier()</span><br></pre></td></tr></table></figure>
-
-<h3 id="ARM64一致性介绍"><a href="#ARM64一致性介绍" class="headerlink" title="ARM64一致性介绍"></a>ARM64一致性介绍</h3><p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233707145.png" alt="image-20250520233707145"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233732320.png" alt="image-20250520233732320"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520233852070.png" alt="image-20250520233852070"></p>
-<p>ARM相对来说会更加复杂，引入了PoC和PoU的概念。</p>
-<p>PoU的视角是一个CPU的视角来观察，只关注自己的cache等；</p>
-<p>而PoC是站在全局的CPU视角，包括GPU、DMA等。另外就是CPU内部IP的称为Inner，而外部的总线上的称为Outter。</p>
-<p>基于DPDK的头文件来看。</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">从dpdk头文件看:</span><br><span class="line">#define rte_mb() asm volatile(&quot;dmb osh&quot; : : : &quot;memory&quot;)</span><br><span class="line">#define rte_wmb() asm volatile(&quot;dmb oshst&quot; : : : &quot;memory&quot;)</span><br><span class="line">#define rte_rmb() asm volatile(&quot;dmb oshld&quot; : : : &quot;memory&quot;)</span><br><span class="line">#define rte_smp_mb() asm volatile(&quot;dmb ish&quot; : : : &quot;memory&quot;)</span><br><span class="line">#define rte_smp_wmb() asm volatile(&quot;dmb ishst&quot; : : : &quot;memory&quot;)</span><br><span class="line">#define rte_smp_rmb() asm volatile(&quot;dmb ishld&quot; : : : &quot;memory&quot;)</span><br><span class="line">#define rte_io_mb() rte_mb()</span><br><span class="line">#define rte_io_wmb() rte_wmb()</span><br><span class="line">#define rte_io_rmb() rte_rmb()</span><br></pre></td></tr></table></figure>
+                <h2 id="主流现状标卡-Linux内核网络协议栈"><a href="#主流现状标卡-Linux内核网络协议栈" class="headerlink" title="主流现状标卡+Linux内核网络协议栈"></a>主流现状标卡+Linux内核网络协议栈</h2><p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747906892745-82adc57b-7b7a-4c7d-9045-337b7ad3eb0d.png" alt="img"></p>
+<p>数据在相关cpu上下文中处理：</p>
+<p>（1）用户态应用程序</p>
+<p>（2）内核态协议栈</p>
+<p>（2）内核态定时器</p>
+<p>（3）中断</p>
+<p>（4）收发包软中断</p>
+<p>各个上下文之间切换，休眠，唤醒机制；Cpu cache颠簸 对性能的影响。</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907053233-488df2f0-bed1-48c3-a58f-cb952b191a59.png" alt="img"></p>
+<p>应用程序以及网卡多队列很容易利用多核特性进行互不相关水平扩展；</p>
+<p>性能消耗:</p>
+<p>(1)协议栈全局数据结构，不方便水平扩展</p>
+<h2 id="高效网络处理"><a href="#高效网络处理" class="headerlink" title="高效网络处理"></a>高效网络处理</h2><p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907134516-8e805427-ace8-49c9-a27f-2ea1d400bd22.png" alt="img"></p>
+<p>（1）独属的协议栈以及硬件队列：</p>
+<p>（2）水平扩展</p>
+<p>整体由网络收包事件触发；轮询polling收包队列；即dpdk。</p>
+<p>多种多类进程使用同一张网卡；用户态，内核态协议栈隔离；</p>
+<p>应用亲和性（多种编程语言），无需修改应用进程；想加速处理的仅仅是tcp&#x2F;udp协议，而处理了所有协议；空闲时polling耗费大量cpu;</p>
+<h2 id="时延-VS-吞吐"><a href="#时延-VS-吞吐" class="headerlink" title="时延 VS 吞吐"></a>时延 VS 吞吐</h2><p>时延：latency(ns) ,除应用程序之外的处理逻辑越快越好;</p>
+<p>吞吐: throught(cps&#x2F;pps&#x2F;bps), 尽量减少应用程序之外的cpu使用;</p>
+<p>相同点: 减少执行上下文(cpu)的状态切换; 减少协议栈代码的复杂度;</p>
+<p>区别:</p>
+<p>(1)低时延: </p>
+<p>不需要考虑对cpu的节省; (dma?toe?对称加密?polling轮询)</p>
+<p>高精度时间戳;</p>
+<p>自定义API-零拷贝, 自定义协议栈;</p>
+<p>面向内网,网络环境可知;</p>
+<p>(2)高吞吐:</p>
+<p>节省CPU;(DMA, TOE, Inline);轮询模式与中断模式;</p>
+<p>希望可以通过聚合延迟比如中断聚合、DMA聚合减少处理次数、</p>
+<p>面对公网环境,开源Server软件.</p>
+<h2 id="SolarflareNIC-Onload协议栈"><a href="#SolarflareNIC-Onload协议栈" class="headerlink" title="SolarflareNIC Onload协议栈"></a>SolarflareNIC Onload协议栈</h2><p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907370996-6a750637-2824-4d7d-8ad5-6b3d8a763586.png" alt="img"></p>
+<p>组件有：</p>
+<p>Component:</p>
+<p>内核态:</p>
+<p>Sfc.ko: Linux net driver;</p>
+<p>Sfc_char.ko提供sfc low level resources. 支持使用ef_vi接口访问network adapter;</p>
+<p>Sfc_resource.ko管理adapter的虚拟化资源;</p>
+<p>Onload.ko  Onload内核组件;</p>
+<p>用户态:</p>
+<p>Libonload.so:用户态协议栈+POSIX接口</p>
+<p>Libonload_ext.so Onload自定义扩展接口</p>
+<p>onload_cp_server控制平面control plane,维护onload   l2&#x2F;l3表项;</p>
+<p>优势:</p>
+<p>POSIX兼容接口</p>
+<p>避免多种执行上下文;</p>
+<p>单进程&#x2F;线程单独协议栈;</p>
+<p>软硬件自定义优化;</p>
+<p>自定义协议栈优化;</p>
+<h3 id="兼容性"><a href="#兼容性" class="headerlink" title="兼容性"></a>兼容性</h3><p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907405186-80cb6b48-1f02-4171-a6ec-4e0aa7ad521a.png" alt="img"></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br></pre></td><td class="code"><pre><span class="line">NR(setrlimit)</span><br><span class="line">NR(socket)</span><br><span class="line">NR(bind)</span><br><span class="line">NR(listen)</span><br><span class="line">NR(accept)</span><br><span class="line">NR(accept4)</span><br><span class="line">NR(connect)</span><br><span class="line">NR(shutdown)</span><br><span class="line">NR(getsockname)</span><br><span class="line">NR(getpeername)</span><br><span class="line">NR(getsockopt)</span><br><span class="line">NR(setsockopt)</span><br><span class="line">NR(recvfrom)</span><br><span class="line">NR(recvmsg)</span><br><span class="line">NR(recvmmsg)</span><br><span class="line">NR(sendto)</span><br><span class="line">NR(sendmsg)</span><br><span class="line">NR(sendmmsg)</span><br><span class="line">NR(select)</span><br><span class="line">NR(poll)</span><br><span class="line">NR(ppoll)</span><br><span class="line">NR(splice)</span><br><span class="line">NR(read)</span><br><span class="line">NR(write)</span><br><span class="line">NR(readv)</span><br><span class="line">NR(writev)</span><br><span class="line">NR(close)</span><br><span class="line">NR(fcntl)</span><br><span class="line">NR(ioctl)</span><br><span class="line">NR(dup)</span><br><span class="line">NR(dup2)</span><br><span class="line">NR(dup3)</span><br><span class="line">NR(vfork)</span><br><span class="line">NR(open)</span><br><span class="line">NR(creat)</span><br><span class="line">NR(socketpair)</span><br><span class="line">NR(pipe)</span><br><span class="line">NR(pipe2)</span><br><span class="line">NR(setuid)</span><br><span class="line">NR(chroot)</span><br><span class="line">NR(execve)</span><br><span class="line">NR(epoll_create)</span><br><span class="line">NR(epoll_create1)</span><br><span class="line">NR(epoll_ctl)</span><br><span class="line">NR(epoll_wait)</span><br><span class="line">NR(epoll_pwait)</span><br></pre></td></tr></table></figure>
 
 
 
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520235133367.png" alt="image-20250520235133367"></p>
-<p>io_w&#x2F;rmb都是outter-shared的，smp的都是inner_shared。</p>
-<p>但是典型鲲鹏、飞腾CPU，内部也是有很多NUMA的，这些NUMA应该不算一个cluster吧，那又怎么算inner和outter呢？</p>
-<p>另外ARM的Cache一致性协议，比如ACE(AXI Coherency Extension)和CHI协议来做一致性保护，也不清楚比如鲲鹏、飞腾对cache一致性协议的相关情况。</p>
-<p>曾经在调试过遇到过的问题；</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250520235526519.png" alt="image-20250520235526519"></p>
-<p>之前在收包代码中，先判断了flag，也就是dma描述符已写标记位，然后再取length。此时length值还是原始的mbuf的buffer_len，没有被逻辑回写成最新的pkt_len。但在x86上没发现问题，也正好说明了x86的一致性在io方面仅使用了编译器的屏障。而ARM上需要使用指令集的屏障。</p>
-<p>另外还有常见避免使用内存屏障的方式，比如dependency，就是让数据自己产生依赖，让cpu自己保证这个依赖被cpu正确处理。</p>
-<p>如海思DPDK代码：</p>
-<p>Dpdk:hns3_recv_scattered_pkts：</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">rxdp = &amp;rx_ring[rx_id]</span><br><span class="line">bd_base_info = rte_le_to_cpu_32(rxdp-&gt;rx.bd_base_info);</span><br><span class="line">if (unlikely(!(bd_base_info &amp; BIT(HNS3_RXD_VLD_B))))</span><br><span class="line">		break;</span><br><span class="line"></span><br><span class="line">rxd = rxdp[(bd_base_info &amp; (1u &lt;&lt; HNS3_RXD_VLD_B)) - (1u &lt;&lt; HNS3_RXD_VLD_B)];</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907435107-a46cff51-e4d7-4525-adbe-8171de0b8128.png" alt="img"></p>
+<p>(1)对于每个fd, Onload.ko在内核态与用户态维护相同的数据结构;</p>
+<p>(2)路由表,arp表以及tcp client port冲突等都借助内核态维护;</p>
+<p>(3)Onload同时维护两套协议栈:</p>
+<p>一套位于用户态,基于solarflare出口的;</p>
+<p>另一套维护内核,作为备份,向内核申请所有协议栈资源以及epoll资源;</p>
+<p>所以onload的socket与其他fd均可交给epoll维护, onload socket事件由libonload.so接收, 其他fd,例如timerfd, signalfd,内核协议栈fd直接内核态epoll多路复用接收.</p>
+<h3 id="PacketBuffer"><a href="#PacketBuffer" class="headerlink" title="PacketBuffer"></a>PacketBuffer</h3><p>用户态管理DMA区域; Hugepage&#x2F;mmap方式;</p>
+<p>Buffer tables: 页表,多Mode: Large Buffer Table&#x2F;Onload - Huge Pages&#x2F;Scalable Packet Buffer Mode</p>
+<p>Memoryregion: 具体内存页, 关联到相应的PD上;</p>
+<p>理解本身可以基于hugepage来做, 不过协议栈需要支持非root用户, 非root用户hugepage权限;</p>
+<p>Hugepage本身共享安全性隐患;Solarflare还考虑了page fault时动态分配, 另外给硬件的内存不可以swap等问题;</p>
+<h3 id="Queue"><a href="#Queue" class="headerlink" title="Queue"></a>Queue</h3><p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907575610-9806b263-0f93-47b1-a060-4c443ccb5522.png" alt="img"></p>
+<h3 id="HW-Queue"><a href="#HW-Queue" class="headerlink" title="HW Queue"></a>HW Queue</h3><p>RQ&#x2F;TQ&#x2F;EQ:被导向用户态处理</p>
+<p>RQ和TQ为常见的收发包队列, EQ接收事件,包含RQ&#x2F;TQ的描述符使用完成,出错等; EQ支持轮询接口以及阻塞接口. 相较于virtio, 将发送队列和接收队列的事件合并了.</p>
+<p>可轮询该event queue或block在该queue上等待event发生。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">enum &#123;  </span><br><span class="line">  EF_EVENT_TYPE_RX,/** Good data was received. */</span><br><span class="line">  EF_EVENT_TYPE_TX,/** Packets have been sent. */</span><br><span class="line">  EF_EVENT_TYPE_RX_DISCARD,/** Data received and buffer consumed, but something is wrong. */</span><br><span class="line">  EF_EVENT_TYPE_TX_ERROR,/** Transmit of packet failed. */</span><br><span class="line">  EF_EVENT_TYPE_RX_NO_DESC_TRUNC,/** Received packet was truncated due to a lack of descriptors. */</span><br><span class="line">  EF_EVENT_TYPE_SW,/** Software generated event. */</span><br><span class="line">  EF_EVENT_TYPE_OFLOW,/** Event queue overflow. */</span><br><span class="line">  EF_EVENT_TYPE_TX_WITH_TIMESTAMP,/** TX timestamp event. */</span><br><span class="line">  EF_EVENT_TYPE_RX_PACKED_STREAM,/** A batch of packets was received in a packed stream. */</span><br><span class="line">  EF_EVENT_TYPE_RX_MULTI,/** A batch of packets was received on a RX event merge vi. */</span><br><span class="line">  EF_EVENT_TYPE_TX_ALT,/** Packet has been transmitted via a &quot;TX alternative&quot;. */</span><br><span class="line">  EF_EVENT_TYPE_RX_MULTI_DISCARD,/** A batch of packets was received with error condition set. */</span><br><span class="line">  EF_EVENT_TYPE_RESET,/** Event queue has been forcibly halted (hotplug, reset, etc.) */</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
 
-<p>(bd_base_info &amp; (1u &lt;&lt; HNS3_RXD_VLD_B)) - (1u &lt;&lt; HNS3_RXD_VLD_B) 这个一定是个0，因为上面已经保证了有HNS3_RXD_VLD_B</p>
-<p>这里就是保证了在flag被读取之后再次读取length。</p>
-<h3 id="PCIe-Order"><a href="#PCIe-Order" class="headerlink" title="PCIe Order"></a>PCIe Order</h3><p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001326979.png" alt="image-20250521001326979"></p>
-<p>讲了那么多cpu的order，pcie一样具有order。</p>
-<p>ido表示基于pcie bdf的乱序，一般都可以开。</p>
-<p>rlo要根据业务具体分析，是否有dependency。</p>
-<h3 id="尾指针"><a href="#尾指针" class="headerlink" title="尾指针"></a>尾指针</h3><p>由于实现virtio1.1不支持尾指针，在arm环境上测试，发现收包性能在以太灌入大于cpu能力上限时，发现性能会弱于刚好满足cpu能力上限时的流量。</p>
-<p>根据perf分析了收包瓶颈</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001703280.png" alt="image-20250521001703280"></p>
-<p>可以看到大量cpu cycle用于读取描述符，判断标志位。</p>
-<p>合理推测当芯片性能高于软件时，uvn频繁dma寻求可用描述符，当ring环绕一圈时，芯片dma的位置和软件回收描述符的位置存在冲突。由于没有DDIO，频繁的dma行为会影响软件的性能。</p>
-<p>另外</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001913736.png" alt="image-20250521001913736"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521001926694.png" alt="image-20250521001926694"></p>
-<p>对于没有尾指针时，每个包都需要引入一次内存屏障。最后敲门前，又需要引入一次内存屏障。</p>
-<p>在arm上，频繁的dma_wmb()也存在一定的开销。</p>
-<h2 id="伟大目标"><a href="#伟大目标" class="headerlink" title="伟大目标"></a>伟大目标</h2><p>本人目前在一家国产网卡公司。</p>
-<p>总是想着做点高性能的东西。</p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521002108739.png" alt="image-20250521002108739"></p>
-<p><img src="/../images/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/image-20250521002205272.png" alt="image-20250521002205272"></p>
-<p>看着cx7单核，也就是iperf3和irq在同一个核上时，可以达到这么大还是挺羡慕的。希望有一天我们也可以设计出这样的芯片。</p>
+
+
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907688890-1c4b3130-87e8-4e60-a7d8-a7e7381d5482.png" alt="img"></p>
+<p>将驱动的自定义数据结构与硬件Metadata以及报文放置在一起;</p>
+<p>收包scatterlist串链。</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907709416-cc5d0186-415c-43e6-969b-e9af0f0e0a53.png" alt="img"></p>
+<p>事件合并，类似于中断合并吧。</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907723274-3f88a213-654d-415c-a88d-f50ac5803e35.png" alt="img"></p>
+<p>报文引流，类似于aRFS；</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907934143-0e0867dd-6937-45d8-8707-c292485a67b4.png" alt="img"></p>
+<p>RSS: 多条流负载分担;</p>
+<p>用户态协议栈:</p>
+<p>(1)多类进程存在时, 不同进程打开不同的端口号; 每进程一组queue, 需要支持指定流量上送某些queue;</p>
+<p>(2)作为client时, 发包src_port由协议栈选择, 回来时仍要保证走tx所对应的rx方向;</p>
+<p>Solarflare不支持IP分片报文;不支持掩码规则; 支持Stolen(bypass kernel stack)&#x2F;Replicated(copy to multiple consumers)&#x2F;Sniffed(嗅探)</p>
+<p>Onload当前规则优先级: 当listen&#x2F;connect时都会下发filter规则.</p>
+<h3 id="零拷贝"><a href="#零拷贝" class="headerlink" title="零拷贝"></a>零拷贝</h3><p>需要使用Onload扩展接口</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907969512-2736fdc9-88a7-46fa-b1c9-07c8ac7debb8.png" alt="img"></p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747907994775-fabdeb53-1a6c-4983-819e-3aba4dc48c69.png" alt="img"></p>
+<h3 id="evfi"><a href="#evfi" class="headerlink" title="evfi"></a>evfi</h3><p>开源: L2层Solareflare收发包接口,完全不支持POSIX接口</p>
+<p>一定程度上形成部分生态, 在证券交易里应该有不少应用.</p>
+<p>基于sfc_char.ko驱动;</p>
+<p>理解onload.ko与sfc_char.ko都是暴露硬件资源的接口, 提供给不同的上层用户态应用.</p>
+<p>提供之前所介绍的相关组件:</p>
+<p>Virtual  Interface&#x2F;</p>
+<p>Protection Domain&#x2F;</p>
+<p>Memory Region&#x2F;</p>
+<p>Pakcet Buffer</p>
+<p>PIO&#x2F;CTPIO</p>
+<p>Filters</p>
+<p>TX Alternatives </p>
+<h3 id="TCPDIRECT"><a href="#TCPDIRECT" class="headerlink" title="TCPDIRECT"></a>TCPDIRECT</h3><p>POSIX不兼容, 以lib库形式提供,基本实现了tcp协议栈;</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912065450-38f637a9-b604-45ba-b48a-69219b45718d.png" alt="img"></p>
+<h2 id="硬件特性："><a href="#硬件特性：" class="headerlink" title="硬件特性："></a>硬件特性：</h2><p>低时延特性:</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912203973-87b5bce6-5e1f-4c77-a2ab-6d18ea598320.png" alt="img"></p>
+<p>全局提供的一组硬件buffer;软件可提前将数据包写入该buffer, 非DMA,直接写入的方式;</p>
+<p>后续发包依然占用描述符element, 不过无data buffer, 直接通过id关联到PIO buffer. </p>
+<p>提高发包时延.</p>
+<h2 id="HW-CTPIO"><a href="#HW-CTPIO" class="headerlink" title="HW CTPIO"></a>HW CTPIO</h2><p>Cut-through PIO</p>
+<p>Cut-through强调从PCIe直通到network port, bypass network adapter transmit datapth.</p>
+<p>支持三种模式:</p>
+<p>(1)ct(仅10G) (2)store and forward: packet is buffered;</p>
+<p>(3)Store and forward-with-posion-disable: 基于sf,保证无效报文不会被传输.</p>
+<p>CTPIO与TOE, loopback, flow control等特性不共存;</p>
+<p>软件直接基于Buffer写入，后直接发送， FCS仍然由硬件负责；</p>
+<p>软件这边会基于链路带宽调整cpu写入速率，保证以cpu主频的写入速率不超过链路带宽。</p>
+<p>EF_VI_WRITE_BUFFER_SIZE * 8 * tick_rate &#x2F; Mbps &#x2F; 1000000;</p>
+<p>Tick_rate为cpu主频。</p>
+<h2 id="HW-TX-Alternatives"><a href="#HW-TX-Alternatives" class="headerlink" title="HW TX Alternatives"></a>HW TX Alternatives</h2><p>提前多分配几个virtual interface;</p>
+<p>向每个virtual interface里 transmit报文；</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912316208-604c4ebe-2d5c-4ce3-99fb-40de3eff84b9.png" alt="img"></p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912326858-2c4d3d35-2bac-49e4-a696-45a4b8d229cb.png" alt="img"></p>
+<h3 id="时延比较"><a href="#时延比较" class="headerlink" title="时延比较"></a>时延比较</h3><p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912612135-9a3c593b-1ccc-4f62-a390-cbdbe8f3d262.png" alt="img"></p>
+<h2 id="吞吐测试"><a href="#吞吐测试" class="headerlink" title="吞吐测试"></a>吞吐测试</h2><p>未使用Onload下：</p>
+<p>Netperf:</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912698795-aa6ecb05-22da-418e-8e86-46eaa186fff9.png" alt="img"></p>
+<p>nginx&#x2F;wrk:</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912702273-ba9b5068-fe07-47d0-a228-8b7890f63446.png" alt="img"></p>
+<p>在Onload下：</p>
+<p>Netperf:</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912722732-f983fb4c-22e9-4650-99b5-c666884b8975.png" alt="img"></p>
+<p>nginx&#x2F;wrk:</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912736405-c137279e-1ce5-41bb-b8e2-4a7dab1c40f1.png" alt="img"></p>
+<h2 id="DPDK用户态协议栈："><a href="#DPDK用户态协议栈：" class="headerlink" title="DPDK用户态协议栈："></a>DPDK用户态协议栈：</h2><h3 id="gazelle-欧拉社区用户态协议栈"><a href="#gazelle-欧拉社区用户态协议栈" class="headerlink" title="gazelle 欧拉社区用户态协议栈"></a>gazelle 欧拉社区用户态协议栈</h3><p>基于dpdk用户态开源协议栈， 也是基于lwip协议栈代码；</p>
+<p>相较于Fstack成熟度稳定性应该会弱，但支持LD_PRELOAD.</p>
+<p>官方测试mysql提高20%性能；</p>
+<p>两种模式：</p>
+<p>（1）ltran进程模式： 该模式等于启动一个ltran专门用于收发包，应用程序Application把原本通过内核收发包转移到通过该进程收发包；</p>
+<p>（2）单进程且网卡支持多队列，则直接使用网卡多队列分发报文到各线程，不启动ltran进程.(这种情况下和fstack方式类似了)；</p>
+<p>相较于onload的部署dpdk复杂度都会大很多， 尤其是面对可能其他编程语言。</p>
+<p>目前来看只有onload同时支持多进程，多线程， 支持阻塞休眠接口， 支持与内核态协议栈兼容。</p>
+<p>另外onload十分强调自己的tuning性能调优，可以感受到它的成熟高很高。</p>
+<p>用户态程序模型：</p>
+<p>IO复用模型：Nginx</p>
+<p>网络IO非对称模型：mysql</p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912865651-14e1c60c-fb85-4db4-8a00-32792f0b2171.png" alt="img"></p>
+<h2 id="数据库的挑战"><a href="#数据库的挑战" class="headerlink" title="数据库的挑战"></a>数据库的挑战</h2><p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912897119-b6125f96-f1af-4621-8e9d-76523aefb986.png" alt="img"></p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912905360-fde367d7-d23e-4cfb-a5c2-960c55befa76.png" alt="img"></p>
+<p><img src="/../images/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/1747912917262-ad3d9fd3-edab-40d8-969b-7e97515cff07.png" alt="img"></p>
 
                 
             </div>
@@ -511,7 +558,7 @@ CPU架构
                     </i>
                 </span>
                 <span class="reprint-info">
-                    <a href="https://acanofgas.github.io/2025/05/19/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/">https://acanofgas.github.io/2025/05/19/%E5%90%84CPU%E5%B9%B3%E5%8F%B0%E4%B8%80%E4%BA%9B%E6%9D%82%E8%B0%88/</a>
+                    <a href="https://acanofgas.github.io/2025/05/22/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/">https://acanofgas.github.io/2025/05/22/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/</a>
                 </span>
             </div>
             <div class="reprint__notice">
@@ -625,17 +672,18 @@ CPU架构
 <article id="prenext-posts" class="prev-next articles">
     <div class="row article-row">
         
-        <div class="article col s12 m6" data-aos="fade-up">
+        <div class="article col s12 m6" data-aos="fade-up" data-aos="fade-up">
             <div class="article-badge left-badge text-color">
-                <i class="fas fa-chevron-left"></i>&nbsp;上一篇</div>
+                <i class="far fa-dot-circle"></i>&nbsp;本篇
+            </div>
             <div class="card">
-                <a href="/2025/05/19/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/">
+                <a href="/2025/05/22/%E4%BD%8E%E6%97%B6%E5%BB%B6%E7%BD%91%E5%8D%A1%E6%8A%80%E6%9C%AF%E5%88%86%E6%9E%90/">
                     <div class="card-image">
                         
                         
-                        <img src="/medias/featureimages/1.jpg" class="responsive-img" alt="qemu/vdpa 热迁移优化分析">
+                        <img src="/medias/featureimages/7.jpg" class="responsive-img" alt="低时延网卡技术分析">
                         
-                        <span class="card-title">qemu/vdpa 热迁移优化分析</span>
+                        <span class="card-title">低时延网卡技术分析</span>
                     </div>
                 </a>
                 <div class="card-content article-content">
@@ -645,9 +693,9 @@ CPU架构
                         
                     </div>
                     <div class="publish-info">
-                        <span class="publish-date">
-                            <i class="far fa-clock fa-fw icon-date"></i>2025-05-19
-                        </span>
+                            <span class="publish-date">
+                                <i class="far fa-clock fa-fw icon-date"></i>2025-05-22
+                            </span>
                         <span class="publish-author">
                             
                             <i class="fas fa-user fa-fw"></i>
@@ -656,6 +704,7 @@ CPU架构
                         </span>
                     </div>
                 </div>
+
                 
             </div>
         </div>
@@ -666,13 +715,13 @@ CPU架构
                 下一篇&nbsp;<i class="fas fa-chevron-right"></i>
             </div>
             <div class="card">
-                <a href="/2025/05/19/DPDK-bifurcated-driver%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%A1%88/">
+                <a href="/2025/05/19/qemu-vdpa-%E7%83%AD%E8%BF%81%E7%A7%BB%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90/">
                     <div class="card-image">
                         
                         
-                        <img src="/medias/featureimages/11.jpg" class="responsive-img" alt="DPDK bifurcated driver实现方案">
+                        <img src="/medias/featureimages/1.jpg" class="responsive-img" alt="qemu/vdpa 热迁移优化分析">
                         
-                        <span class="card-title">DPDK bifurcated driver实现方案</span>
+                        <span class="card-title">qemu/vdpa 热迁移优化分析</span>
                     </div>
                 </a>
                 <div class="card-content article-content">
